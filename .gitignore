@@ -1,7 +1,27 @@
+# ── Python ──────────────────────────────────────────
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.egg-info/
+.env
+
+# ── IDE ─────────────────────────────────────────────
 .idea/
+.vscode/
+
+# ── App runtime output ──────────────────────────────
 leaves_out/
-*.zip
 dataset/
+*.zip
+
+# ── C++ module build artifacts (leaf_cpp) ───────────
+leaf_cpp/vcpkg_installed/
+leaf_cpp/build/
+leaf_cpp/wheelhouse/
+leaf_cpp/fixed/
+leaf_cpp/dist/
+
+# ── Compiled modules ──
+*.pyd
+*.so

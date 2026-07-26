@@ -190,6 +190,40 @@ if cuts[sel_fname]["leaves"]:
             }]), use_container_width=True, hide_index=True)
             st.image(sel_result["binary"], caption="Маска сегментации",
                      use_container_width=True, clamp=True)
+
+            # ── Дескриптор формы (профиль вращения) ──────────────────────
+            st.caption("Дескриптор формы (профиль вращения)")
+            try:
+                from core import descriptor
+                # Маска сегментации: лист = 255 на чёрном фоне.
+                # leaf["mask"] — вырез маски выбранного листа.
+                leaf_mask = seg["mask"]
+                desc = descriptor.describe(leaf_mask)
+
+                # График: угол (0..180) -> мера Жаккара
+                chart_df = pd.DataFrame({
+                    "angle": desc["angles"],
+                    "jaccard": desc["jaccard_values"],
+                }).set_index("angle")
+                st.line_chart(chart_df, height=200)
+
+                # Кнопка выгрузки дескриптора в CSV
+                csv = "angle;jaccard\n" + "\n".join(
+                    f"{int(a)};{v:.6f}"
+                    for a, v in zip(desc["angles"], desc["jaccard_values"])
+                )
+                st.download_button(
+                    "Скачать дескриптор (CSV)",
+                    data=csv,
+                    file_name=f"{sel_label}_descriptor.csv",
+                    mime="text/csv",
+                    key=f"desc_csv_{sel_f}_{sel_i}",
+                )
+            except ImportError:
+                st.info("Модуль дескриптора (leaftools) не установлен. "
+                        "Соберите его из папки leaf_cpp/.")
+            except Exception as e:
+                st.warning(f"Не удалось посчитать дескриптор: {e}")
 else:
     with big_col:
         st.warning("На этом скане листья не найдены.")

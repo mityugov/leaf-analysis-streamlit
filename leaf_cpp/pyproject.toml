@@ -1,0 +1,31 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10",
+  "pybind11"
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "leaftools"
+version = "0.1.0"
+description = "Дескриптор формы - профиль вращения"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "mityugov" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux"
+]
+
+[tool.scikit-build]
+wheel.packages = ["src/leaftools"]
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-*"
+skip = "*-musllinux_*"
+test-requires = ["pytest", "numpy", "opencv-python"]
+test-command = "python -m pytest {project}/tests -q"

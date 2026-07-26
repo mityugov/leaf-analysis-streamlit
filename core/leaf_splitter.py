@@ -4,6 +4,7 @@
 
 import cv2
 import numpy as np
+from typing import Any
 
 MIN_AREA = 2000     # минимальная площадь контура (отсекает мусор и пыль)
 MAX_ASPECT = 50     # максимальная вытянутость (отсекает линейки, царапины)
