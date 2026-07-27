@@ -22,7 +22,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      # vcpkg читает leaf_cpp/vcpkg.json и ставит зависимости (opencv4, pybind11).
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
@@ -33,19 +32,19 @@ jobs:
         with:
           package-dir: leaf_cpp
         env:
-          # Toolchain vcpkg — путь передаётся в CMake на всех платформах.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           VCPKG_MANIFEST_MODE: "ON"
-          # На Linux cibuildwheel собирает внутри manylinux-контейнера.
-          # Пробрасываем vcpkg внутрь: монтируем папку и передаём переменные.
+
           CIBW_ENVIRONMENT_LINUX: >-
             VCPKG_ROOT=/host${{ github.workspace }}/vcpkg
             CMAKE_TOOLCHAIN_FILE=/host${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
             VCPKG_MANIFEST_MODE=ON
-          # Системные библиотеки, нужные OpenCV в manylinux-контейнере.
+
           CIBW_BEFORE_ALL_LINUX: >-
-            yum install -y zip unzip tar curl ninja-build perl-IPC-Cmd ||
-            (apt-get update && apt-get install -y zip unzip tar curl ninja-build)
+            dnf install -y zip unzip tar curl perl-IPC-Cmd
+            mesa-libGL-devel glib2-devel
 
       - uses: actions/upload-artifact@v4
         with:
