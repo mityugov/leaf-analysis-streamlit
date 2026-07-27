@@ -1,6 +1,12 @@
 {
   "name": "leaftools",
   "version": "0.1.0",
-  "dependencies": ["pybind11", "opencv4"],
+  "dependencies": [
+    "pybind11",
+    {
+      "name": "opencv4",
+      "default-features": false
+    }
+  ],
   "builtin-baseline": "07425ae85e730721ba2deeb55937be1498a7115a"
 }

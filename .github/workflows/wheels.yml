@@ -44,7 +44,8 @@ jobs:
 
           CIBW_BEFORE_ALL_LINUX: >-
             dnf install -y zip unzip tar curl perl-IPC-Cmd
-            mesa-libGL-devel glib2-devel
+            autoconf automake libtool autoconf-archive
+            gettext-devel bison flex
 
       - uses: actions/upload-artifact@v4
         with:
