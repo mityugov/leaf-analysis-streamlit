@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 from pathlib import Path
+import altair as alt
 
 from core import segmentation
 from core.leaf_splitter import split_leaves
@@ -78,6 +79,11 @@ def leaf_name(file_name: str, leaf_idx: int) -> str:
     return f"{p.stem}_{leaf_idx + 1}{p.suffix or '.bmp'}"
 
 st.sidebar.markdown("### Настройки анализа")
+remove_petiole = st.sidebar.checkbox(
+    "Удалять черенок",
+    value=False,
+    help="Отрезать черенок и считать профиль вращения только по листовой пластине.",
+)
 st.sidebar.markdown("---")
 
 st.title("🍃 Анализ листьев")
@@ -167,13 +173,13 @@ if cuts[sel_fname]["leaves"]:
         st.subheader("Лист")
         st.write(f"**Файл:** `{sel_label}`")
 
-        # Признаки быстрой нарезки — доступны сразу
-        st.caption("Признаки контура (быстрая нарезка)")
-        st.dataframe(pd.DataFrame([{
-            "area": round(sel_leaf["area"], 1),
-            "perimeter": round(sel_leaf["perimeter"], 1),
-            "form_factor": round(sel_leaf["form_factor"], 3),
-        }]), use_container_width=True, hide_index=True)
+        # # Признаки быстрой нарезки — доступны сразу
+        # st.caption("Признаки контура (быстрая нарезка)")
+        # st.dataframe(pd.DataFrame([{
+        #     "area": round(sel_leaf["area"], 1),
+        #     "perimeter": round(sel_leaf["perimeter"], 1),
+        #     "form_factor": round(sel_leaf["form_factor"], 3),
+        # }]), use_container_width=True, hide_index=True)
 
         # Результат тяжёлого анализа — только после кнопки
         if sel_result is None:
@@ -191,21 +197,66 @@ if cuts[sel_fname]["leaves"]:
             st.image(sel_result["binary"], caption="Маска сегментации",
                      use_container_width=True, clamp=True)
 
+            # ── Отрезание черешка (управляется галочкой в сайдбаре) ───────
+            leaf_mask = seg["mask"]          # лист = 255 на чёрном
+            mask_for_descriptor = leaf_mask  # по умолчанию — вся маска
+
+            if remove_petiole:
+                try:
+                    import leaftools
+                    from pathlib import Path
+                    models_dir = Path(__file__).parent / "models"
+                    svm_model = str(models_dir / "svm_model.xml")
+                    svm_csv = str(models_dir / "SVM_train_7_1.csv")
+
+                    cut = leaftools.cut_petiole(
+                        leaf_mask, svm_model_path=svm_model, svm_csv_path=svm_csv)
+
+                    if cut["found"]:
+                        mask_for_descriptor = cut["blade"]
+                        cc1, cc2 = st.columns(2)
+                        with cc1:
+                            st.image(cut["blade"], caption="Пластина",
+                                     use_container_width=True, clamp=True)
+                        with cc2:
+                            st.image(cut["petiole"], caption="Черенок",
+                                     use_container_width=True, clamp=True)
+                        st.caption("Профиль вращения — по пластине.")
+                    else:
+                        st.warning("Точки черешка не найдены — "
+                                   "профиль по всей маске.")
+                except ImportError:
+                    st.info("Модуль leaftools не установлен.")
+                except Exception as e:
+                    st.warning(f"Не удалось отрезать черенк: {e}")
+
             # ── Дескриптор формы (профиль вращения) ──────────────────────
             st.caption("Дескриптор формы (профиль вращения)")
             try:
                 from core import descriptor
-                # Маска сегментации: лист = 255 на чёрном фоне.
-                # leaf["mask"] — вырез маски выбранного листа.
-                leaf_mask = seg["mask"]
-                desc = descriptor.describe(leaf_mask)
+                # Маска: пластина (если черенок удалён) либо вся маска.
+                desc = descriptor.describe(mask_for_descriptor)
 
                 # График: угол (0..180) -> мера Жаккара
                 chart_df = pd.DataFrame({
                     "angle": desc["angles"],
                     "jaccard": desc["jaccard_values"],
-                }).set_index("angle")
-                st.line_chart(chart_df, height=200)
+                })
+
+                chart = (
+                    alt.Chart(chart_df)
+                    .mark_line()
+                    .encode(
+                        x=alt.X("angle:Q",
+                                scale=alt.Scale(domain=[0, 180]),
+                                title="Угол"),
+                        y=alt.Y("jaccard:Q",
+                                scale=alt.Scale(domain=[0, 1]),
+                                title="Жаккар"),
+                    )
+                    .properties(height=200)
+                )
+                st.altair_chart(chart, use_container_width=True)
 
                 # Кнопка выгрузки дескриптора в CSV
                 csv = "angle;jaccard\n" + "\n".join(

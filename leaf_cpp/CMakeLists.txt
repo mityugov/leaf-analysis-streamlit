@@ -12,6 +12,8 @@ find_package(OpenCV CONFIG REQUIRED)
 pybind11_add_module(_core
     src/module.cpp
     src/rotation_profile.cpp
+    src/petiole/LeafPetiolePointPairFinder.cpp
+    src/petiole/SVM_Classifier.cpp
 )
 
 target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS} src)
