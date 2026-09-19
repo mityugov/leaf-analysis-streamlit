@@ -11,9 +11,20 @@ find_package(OpenCV CONFIG REQUIRED)
 
 pybind11_add_module(_core
     src/module.cpp
-    src/rotation_profile.cpp
+
+    src/rotation_profile/rotation_profile_wrap.cpp
+    src/rotation_profile/RotationProfile.cpp
+
+    src/petiole/petiole_wrap.cpp
     src/petiole/LeafPetiolePointPairFinder.cpp
     src/petiole/SVM_Classifier.cpp
+
+    src/symmetry/symmetry_wrap.cpp
+    src/symmetry/Data.cpp
+    src/symmetry/Utils.cpp
+    src/symmetry/CurvilinearSymmetryBase.cpp
+    src/symmetry/Smoother.cpp
+    src/symmetry/MultiContourController.cpp
 )
 
 target_include_directories(_core PRIVATE ${OpenCV_INCLUDE_DIRS} src)

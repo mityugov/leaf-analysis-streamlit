@@ -1,17 +1,16 @@
 """
-leaftools — дескриптор формы листа (профиль вращения) на C++/OpenCV.
-
-Низкоуровневая функция из C++:
-    generate_descriptor(mask, cx, cy, area) -> dict
-
-Удобная обёртка (готовит данные по стандартной схеме):
-    describe_leaf(path_or_array, invert=True) -> dict
+leaftools — инструменты обработки изображений листьев на C++/OpenCV.
 """
 
-from ._core import generate_descriptor, cv_version, find_petiole_points
+from ._core import (
+    generate_descriptor,
+    cv_version,
+    find_petiole_points,
+    find_symmetry,
+)
 
 __all__ = ["generate_descriptor", "cv_version", "describe_leaf", "describe_mask",
-           "find_petiole_points", "cut_petiole", "draw_petiole_points"]
+           "find_petiole_points", "cut_petiole", "draw_petiole_points", "symmetry"]
 
 
 def _centroid_and_area(mask):
@@ -227,3 +226,28 @@ def draw_petiole_points(mask, cut_result, radius=6):
     cv2.circle(vis, poc["B"], radius, (255, 0, 255), cv2.FILLED)  # розовый
     cv2.circle(vis, poc["S"], radius, (0, 0, 255), cv2.FILLED)    # красный
     return vis
+
+
+def symmetry(mask, lambda_=0.5, start_x=-1, start_y=-1):
+    """
+    Поиск криволинейной оси симметрии листа.
+
+    mask     : бинарная маска (H,W) uint8, лист = 255 на чёрном фоне.
+    lambda_  : параметр сглаживания оси, 0..1 (по умолчанию 0.5).
+    start_x,
+    start_y  : начальная точка; -1 = искать автоматически.
+
+    Возвращает dict:
+        found                : bool — найдена ли ось;
+        jaccard_straightened : мера Жаккара распрямлённой формы;
+        jaccard_original     : мера Жаккара относительно исходной формы;
+        axis                 : BGR-изображение с осью симметрии на листе;
+        straightened         : распрямлённый вдоль оси лист (BGR);
+        reflected            : распрямлённый + его отражение (BGR).
+
+    Если ось не найдена (found=False), полей с картинками нет.
+
+    ВНИМАНИЕ: алгоритм тяжёлый (перебор с возвратом), на крупном листе
+    считается заметное время — в интерфейсе запускайте по кнопке.
+    """
+    return find_symmetry(mask, lambda_, start_x, start_y)

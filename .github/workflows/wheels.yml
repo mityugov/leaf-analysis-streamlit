@@ -25,12 +25,12 @@ jobs:
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgJsonGlob: "leaf_cpp/vcpkg.json"
+          vcpkgJsonGlob: "leaftools_cpp/vcpkg.json"
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.21.3
         with:
-          package-dir: leaf_cpp
+          package-dir: leaftools_cpp
         env:
           CMAKE_TOOLCHAIN_FILE: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           VCPKG_MANIFEST_MODE: "ON"

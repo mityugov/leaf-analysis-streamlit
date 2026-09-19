@@ -1,4 +1,4 @@
-#include "rotation_profile.h"
+#include "RotationProfile.h"
 
 #include <algorithm>
 #include <cmath>

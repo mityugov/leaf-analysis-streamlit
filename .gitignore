@@ -15,12 +15,12 @@ leaves_out/
 dataset/
 *.zip
 
-# ── C++ module build artifacts (leaf_cpp) ───────────
-leaf_cpp/vcpkg_installed/
-leaf_cpp/build/
-leaf_cpp/wheelhouse/
-leaf_cpp/fixed/
-leaf_cpp/dist/
+# ── C++ module build artifacts (leaftools_cpp) ───────────
+leaftools_cpp/vcpkg_installed/
+leaftools_cpp/build/
+leaftools_cpp/wheelhouse/
+leaftools_cpp/fixed/
+leaftools_cpp/dist/
 
 # ── Compiled modules ──
 *.pyd
