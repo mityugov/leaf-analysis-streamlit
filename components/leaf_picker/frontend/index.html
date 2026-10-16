@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<style>
+  /* Компонент живёт в iframe — прозрачный фон и нулевые отступы,
+     чтобы он вписался в страницу Streamlit. */
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  #wrap {
+    position: relative;   /* якорь для оверлея */
+    display: inline-block;
+    line-height: 0;       /* убирает лишний отступ под картинкой */
+    width: 100%;
+  }
+
+  #scan {
+    display: block;
+    width: 100%;
+    height: auto;
+    border-radius: 8px;
+  }
+
+  /* Оверлей лежит ровно поверх скана и тянется вместе с ним. */
+  #overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* ── Зона листа ──────────────────────────────────────────────────────
+     Обычное состояние: полностью прозрачна, скан выглядит нетронутым. */
+  .zone {
+    fill: transparent;
+    stroke: transparent;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    /* Толщина обводки не зависит от масштаба SVG — иначе на большом
+       скане она превратилась бы в волосок. */
+    vector-effect: non-scaling-stroke;
+    cursor: pointer;
+    transition: fill .12s ease, stroke .12s ease;
+  }
+
+  /* Наведение — как у кнопки: лист заливается цветом и обводится. */
+  .zone:hover {
+    fill: rgba(255, 75, 75, .20);
+    stroke: rgba(255, 75, 75, .9);
+  }
+
+  /* Выбранный лист остаётся залитым и после того, как мышь ушла. */
+  .zone.selected {
+    fill: rgba(255, 75, 75, .30);
+    stroke: #ff4b4b;
+    stroke-width: 3;
+  }
+
+  /* Наведение на уже выбранный — чуть ярче, чтобы клик ощущался. */
+  .zone.selected:hover {
+    fill: rgba(255, 75, 75, .38);
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+  <img id="scan" alt="Скан">
+  <svg id="overlay" preserveAspectRatio="none">
+    <g id="zones"></g>
+  </svg>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+//  Связь со Streamlit.
+//  Компонент работает в iframe и обменивается с родительской страницей
+//  сообщениями postMessage — тот же протокол, что у официальной
+//  библиотеки streamlit-component-lib, но без сборки и зависимостей.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function send(type, extra) {
+  window.parent.postMessage(
+    Object.assign({ isStreamlitMessage: true, type }, extra || {}), "*");
+}
+
+/** Сообщает Streamlit высоту содержимого, иначе iframe обрежет картинку. */
+function reportHeight() {
+  const h = wrap.getBoundingClientRect().height;
+  send("streamlit:setFrameHeight", { height: Math.ceil(h) + 4 });
+}
+
+/** Отдаёт выбранный индекс в Python. */
+function reportValue(value) {
+  send("streamlit:setComponentValue", { value, dataType: "json" });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+//  Отрисовка
+// ─────────────────────────────────────────────────────────────────────────
+
+const wrap = document.getElementById("wrap");
+const img = document.getElementById("scan");
+const overlay = document.getElementById("overlay");
+const zonesGroup = document.getElementById("zones");
+
+let currentSrc = null;    // чтобы не перезагружать скан на каждый рендер
+let selectedIndex = null; // выбор хранится ЗДЕСЬ — см. пояснение ниже
+
+/**
+ * Проставляет класс .selected нужной зоне.
+ *
+ * Выбор хранится в самом компоненте, а не приходит из Python на каждом
+ * рендере. Иначе подсветка отставала бы на один клик: Streamlit успевает
+ * отрисовать компонент раньше, чем скрипт страницы запишет новый выбор.
+ * Здесь же подсветка появляется мгновенно, а Python узнаёт о клике
+ * параллельно и может использовать значение по своему усмотрению.
+ */
+function applySelection() {
+  Array.from(zonesGroup.children).forEach((node, i) => {
+    node.classList.toggle("selected", i === selectedIndex);
+  });
+}
+
+function render(args) {
+  // Скан перезагружаем, только если он действительно другой: Streamlit
+  // перерисовывает компонент при любом действии на странице.
+  if (args.src !== currentSrc) {
+    currentSrc = args.src;
+    img.src = args.src;
+  }
+
+  // Начальный выбор может прийти из Python (например, восстановлен
+  // из session_state). Дальше выбором распоряжается компонент.
+  if (selectedIndex === null && args.selected !== null &&
+      args.selected !== undefined) {
+    selectedIndex = args.selected;
+  }
+
+  // Система координат SVG = размер уменьшенного скана. Сам SVG растянут
+  // на 100%, поэтому координаты зон масштабируются автоматически.
+  if (args.width && args.height) {
+    overlay.setAttribute("viewBox", `0 0 ${args.width} ${args.height}`);
+  }
+
+  zonesGroup.replaceChildren();
+
+  (args.zones || []).forEach((zone, index) => {
+    const poly = document.createElementNS(SVG_NS, "polygon");
+    poly.setAttribute("points", zone.points.map(p => p.join(",")).join(" "));
+    poly.setAttribute("class", "zone");
+
+    // Нативная подсказка с именем листа.
+    const title = document.createElementNS(SVG_NS, "title");
+    title.textContent = zone.label || `Лист ${index + 1}`;
+    poly.appendChild(title);
+
+    poly.addEventListener("click", () => {
+      selectedIndex = index;
+      applySelection();       // подсветка сразу, без ожидания Python
+      reportValue(index);
+    });
+
+    zonesGroup.appendChild(poly);
+  });
+
+  applySelection();
+  reportHeight();
+}
+
+// Картинка грузится асинхронно — высоту сообщаем, когда она готова.
+img.addEventListener("load", reportHeight);
+
+// Ширина колонки меняется вместе с окном, а высота зависит от неё.
+window.addEventListener("resize", reportHeight);
+
+// Данные от Streamlit.
+window.addEventListener("message", (event) => {
+  if (event.data.type === "streamlit:render") {
+    render(event.data.args || {});
+  }
+});
+
+send("streamlit:componentReady", { apiVersion: 1 });
+</script>
+
+</body>
+</html>

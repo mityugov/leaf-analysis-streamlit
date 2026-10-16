@@ -6,9 +6,9 @@ import cv2
 import numpy as np
 from typing import Any
 
-MIN_AREA = 2000     # минимальная площадь контура (отсекает мусор и пыль)
+MIN_AREA = 500      # минимальная площадь контура (отсекает мусор и пыль)
 MAX_ASPECT = 50     # максимальная вытянутость (отсекает линейки, царапины)
-PADDING = 25        # отступ вокруг листа при вырезании, пикселей
+PADDING = 50        # отступ вокруг листа при вырезании, пикселей
 
 
 def binarize_otsu(image_bgr: np.ndarray) -> np.ndarray:
@@ -36,6 +36,45 @@ def binarize_otsu(image_bgr: np.ndarray) -> np.ndarray:
     return binary
 
 
+def is_leaf_like(
+        contour: np.ndarray,
+        min_area: float = MIN_AREA,
+        max_aspect: float = MAX_ASPECT,
+) -> bool:
+    """
+    Похож ли контур на лист.
+
+    Два критерия: площадь (отсекает пыль и мелкие пятна) и вытянутость
+    bounding box (отсекает линейки, царапины, полосы по краю скана).
+
+    Вынесено отдельно, потому что проверка нужна в двух местах: при поиске
+    листьев на скане и при очистке выреза — там закрашиваются только те
+    объекты, которые сами являются листьями, а мелочь остаётся нетронутой.
+
+    Параметры
+    ---------
+    contour : np.ndarray
+        Контур в формате OpenCV (N, 1, 2), dtype int32.
+    min_area : float
+        Минимальная площадь контура в пикселях.
+    max_aspect : float
+        Максимально допустимое отношение сторон bounding box.
+
+    Возвращает
+    ----------
+    bool
+        True, если контур прошёл оба критерия.
+    """
+    if cv2.contourArea(contour) < min_area:
+        return False
+
+    x, y, w, h = cv2.boundingRect(contour)
+    if w == 0 or h == 0:
+        return False
+
+    return max(w / h, h / w) <= max_aspect
+
+
 def find_leaf_contours(
         binary: np.ndarray,
         min_area: float = MIN_AREA,
@@ -44,20 +83,17 @@ def find_leaf_contours(
     """
     Ищет контуры листьев на бинарной маске и отбрасывает мусор.
 
-    Берутся только внешние контуры (дырки и прожилки внутри листа не нужны).
-    Каждый контур проверяется по двум критериям: площадь (отсекает пыль и
-    мелкие пятна) и вытянутость bounding box (отсекает линейки, царапины,
-    полосы по краю скана).
+    Берутся только внешние контуры (дырки и прожилки внутри листа не нужны),
+    каждый проверяется через is_leaf_like.
 
     Параметры
     ---------
     binary : np.ndarray
         Бинарная маска (H, W), dtype uint8, где объект = 255.
     min_area : float
-        Минимальная площадь контура в пикселях. Контуры меньше отбрасываются.
+        Минимальная площадь контура в пикселях.
     max_aspect : float
-        Максимально допустимое отношение сторон bounding box (длинная/короткая).
-        Контуры более вытянутые отбрасываются.
+        Максимально допустимое отношение сторон bounding box.
 
     Возвращает
     ----------
@@ -69,21 +105,7 @@ def find_leaf_contours(
     contours, _ = cv2.findContours(
         binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-    good = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < min_area:
-            continue
-
-        x, y, w, h = cv2.boundingRect(contour)
-        if w == 0 or h == 0:
-            continue
-        if max(w / h, h / w) > max_aspect:
-            continue
-
-        good.append(contour)
-
-    return good
+    return [c for c in contours if is_leaf_like(c, min_area, max_aspect)]
 
 
 def crop_by_bbox(
@@ -159,7 +181,7 @@ def crop_by_bbox(
     return crop, (x0, y0, x1 - x0, y1 - y0)
 
 
-def split_leaves(
+def split_leaf_scan_into_parts(
         image_bgr: np.ndarray,
         min_area: float = MIN_AREA,
         max_aspect: float = MAX_ASPECT,
@@ -178,15 +200,15 @@ def split_leaves(
     image_bgr : np.ndarray
         Изображение скана (H, W, 3), dtype uint8, BGR (как из cv2.imread).
     min_area : float
-        Минимальная площадь контура (см. find_leaf_contours).
+        Минимальная площадь контура (см. is_leaf_like).
     max_aspect : float
-        Максимальная вытянутость контура (см. find_leaf_contours).
+        Максимальная вытянутость контура (см. is_leaf_like).
     padding : int
         Отступ вокруг листа при вырезании (см. crop_by_bbox).
     square : bool
         Расширять ли вырез до квадрата (см. crop_by_bbox).
     mask_background : bool
-        Заливать ли фон вокруг листа белым (см. crop_by_bbox).
+        Убирать ли из выреза посторонние листья (см. crop_by_bbox).
 
     Возвращает
     ----------
@@ -194,6 +216,7 @@ def split_leaves(
         Список листьев, по одному словарю на лист, со следующими ключами:
             crop        : np.ndarray — вырезанный лист (h, w, 3) uint8 BGR
             bbox        : tuple[int, int, int, int] — (x, y, w, h) на скане
+            contour     : np.ndarray — контур листа (N, 1, 2) int32 на скане
             area        : float — площадь контура в пикселях
             perimeter   : float — длина контура в пикселях
             form_factor : float — 4·π·area / perimeter² (компактность, ~1 у круга)
@@ -214,6 +237,9 @@ def split_leaves(
         leaves.append({
             "crop": crop,
             "bbox": bbox,
+            # Контур в координатах скана — нужен, чтобы подсвечивать лист
+            # по его реальной форме (компонент leaf_picker).
+            "contour": contour,
             "area": float(area),
             "perimeter": float(perimeter),
             "form_factor": float(form_factor),
