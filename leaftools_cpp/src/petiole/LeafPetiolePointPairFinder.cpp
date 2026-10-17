@@ -90,17 +90,6 @@ bool LeafPetiolePointPairFinder::isValidIndices(int i, int j) const noexcept
 
 bool LeafPetiolePointPairFinder::checkWhiteBetween() const
 {
-    ////// Используем LineIterator для обхода всех пикселей отрезка A-B,
-    ////// а не только трёх опорных точек — это исключает false positive
-    ////// на вогнутых объектах и наклонных отрезках.
-    //cv::LineIterator it(binary_image_, leaf_points_.ptA, leaf_points_.ptB, 8);
-    //for (int i = 0; i < it.count; ++i, ++it)
-    //{
-    //    if (binary_image_.at<uchar>(it.pos()) == 0)
-    //        return false;
-    //}
-    //return true;
-
     // Check direct mid point
     cv::Point mid_point_AB((leaf_points_.ptA.x + leaf_points_.ptB.x) / 2, (leaf_points_.ptA.y + leaf_points_.ptB.y) / 2);
     if (!isValidPoint(mid_point_AB) || binary_image_.at<uchar>(mid_point_AB.y, mid_point_AB.x) == 0) {
@@ -119,7 +108,7 @@ bool LeafPetiolePointPairFinder::checkWhiteBetween() const
         return false;
     }
 
-    //return true;
+    return true;
 }
 
 bool LeafPetiolePointPairFinder::checkBorderPixels() const noexcept
