@@ -4,18 +4,10 @@
 #include <iostream>
 #include <sstream>
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Конструктор
-// ─────────────────────────────────────────────────────────────────────────────
-
 SVM_Classifier::SVM_Classifier(const std::string& model_path)
     : model_path_(model_path)
 {
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Вспомогательный метод
-// ─────────────────────────────────────────────────────────────────────────────
 
 cv::Mat SVM_Classifier::makeFeatureRow(const cv::Vec3f& features) const
 {
@@ -25,10 +17,6 @@ cv::Mat SVM_Classifier::makeFeatureRow(const cv::Vec3f& features) const
     sample.at<float>(0, 2) = features[2];
     return sample;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Загрузка CSV
-// ─────────────────────────────────────────────────────────────────────────────
 
 bool SVM_Classifier::loadCSV(const std::string& csv_path)
 {
@@ -117,10 +105,6 @@ bool SVM_Classifier::loadCSV(const std::string& csv_path)
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Обучение
-// ─────────────────────────────────────────────────────────────────────────────
-
 bool SVM_Classifier::train()
 {
     if (training_features_.empty())
@@ -163,10 +147,6 @@ bool SVM_Classifier::train()
     return true;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Загрузка модели
-// ─────────────────────────────────────────────────────────────────────────────
-
 bool SVM_Classifier::loadModel(const std::string& model_path)
 {
     const std::string& path = model_path.empty() ? model_path_ : model_path;
@@ -197,10 +177,6 @@ bool SVM_Classifier::loadModel(const std::string& model_path)
     }
     return false;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Предсказание
-// ─────────────────────────────────────────────────────────────────────────────
 
 int SVM_Classifier::predict(const cv::Vec3f& features) const
 {
@@ -240,10 +216,6 @@ std::vector<int> SVM_Classifier::predict(const cv::Mat& samples) const
     return predictions;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Decision function
-// ─────────────────────────────────────────────────────────────────────────────
-
 float SVM_Classifier::decisionFunction(const cv::Vec3f& features) const
 {
     if (!is_trained_)
@@ -259,10 +231,6 @@ float SVM_Classifier::decisionFunction(const cv::Vec3f& features) const
 
     return decision_sign_flipped_ ? -score : score;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Определение инверсии знака decision function
-// ─────────────────────────────────────────────────────────────────────────────
 
 bool SVM_Classifier::detectDecisionSignFlip()
 {
