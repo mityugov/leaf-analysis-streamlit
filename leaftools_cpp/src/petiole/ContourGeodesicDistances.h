@@ -6,20 +6,14 @@
 #include <vector>
 
 /**
- * @brief Класс для вычисления геодезических расстояний вдоль контура.
+ * @brief Геодезические расстояния вдоль контура (длина пути по контуру).
  *
- * Вычисляет расстояния по кратчайшему пути вдоль контура между любыми двумя точками
- * на основе префиксных сумм расстояний между соседними точками.
+ * Расстояние от точки i до точки j считается в направлении обхода контура
+ * (по возрастанию индексов). Для замкнутого контура путь при j < i проходит
+ * через конец контура и его начало.
  *
- * Внутреннее представление:
- *   prefixSums[0] = 0
- *   prefixSums[k] = сумма расстояний от точки 0 до точки k
- *
- * Размер prefixSums:
- *   - незамкнутый контур из n точек: n элементов (индексы 0..n-1)
- *   - замкнутый контур из n точек:   n+1 элементов (последний — полный периметр)
- *
- * Допустимые индексы точек: 0 .. getPointCount()-1
+ * Точки нумеруются от 0 до n-1, где n — количество точек контура.
+ * Расстояния вычисляются через префиксные суммы (см. initPrefixSums).
  */
 class ContourGeodesicDistances
 {
@@ -28,18 +22,25 @@ private:
     bool closed_;                    ///< Флаг замкнутости контура.
 
     /**
-     * @brief Инициализирует префиксные суммы на основе расстояний между соседями.
+     * @brief Заполняет prefixSums_ по расстояниям между соседними точками.
      *
-     * Для незамкнутого контура из n точек: n расстояний → n+1 префиксных сумм,
-     * но последний элемент не несёт смысловой нагрузки как точка контура.
-     * Поэтому мы храним ровно n элементов (prefixSums[0]=0, ..., prefixSums[n-1]).
+     * prefixSums_[k] — длина пути по контуру от точки 0 до точки k:
+     *   prefixSums_[0] = 0
+     *   prefixSums_[k] = prefixSums_[k-1] + расстояние от точки k-1 до точки k
      *
-     * Для замкнутого контура из n точек: n расстояний (включая last→first) →
-     * n+1 префиксных сумм, где prefixSums[n] = полный периметр.
+     * Точки нумеруются от 0 до n-1, индекс точки k совпадает с индексом
+     * элемента prefixSums_[k].
      *
-     * @param neighborDistances Вектор расстояний между соседними точками.
-     *        Размер: (n-1) для незамкнутого или n для замкнутого контура.
-     * @param closed Флаг замкнутости.
+     * Размер prefixSums_ для контура из n точек:
+     *   - незамкнутый: n элементов;
+     *   - замкнутый:   n+1 элементов (последний добавляет отрезок
+     *                  от последней точки до первой).
+     *
+     * Пример: замкнутый контур из 3 точек с расстояниями d01, d12, d20:
+     *   prefixSums_ = {0, d01, d01+d12, d01+d12+d20}
+     *
+     * @param neighborDistances Расстояния между соседними точками.
+     * @param closed true, если контур замкнутый.
      */
     void initPrefixSums(const std::vector<double>& neighborDistances, bool closed)
     {
@@ -49,35 +50,26 @@ private:
         if (neighborDistances.empty())
             return;
 
-        // Количество точек контура:
-        // - незамкнутый: neighborDistances.size() = n-1  → n = size+1 точек
-        // - замкнутый:   neighborDistances.size() = n    → n = size точек
-        // Нам нужно n+1 префиксных сумм для замкнутого (включая периметр)
-        // и n префиксных сумм для незамкнутого (от 0 до n-1 включительно).
+        // Элементов на один больше, чем расстояний: первый элемент равен 0.
         const size_t reserveSize = neighborDistances.size() + 1;
         prefixSums_.reserve(reserveSize);
         prefixSums_.push_back(0.0);
 
         for (double d : neighborDistances)
             prefixSums_.push_back(prefixSums_.back() + d);
-
-        // Для незамкнутого контура последний элемент prefixSums_ соответствует
-        // "расстоянию за последней точкой" — он не нужен, удаляем его.
-        // Пример: 3 точки, 2 расстояния → prefixSums_ = {0, d01, d01+d12}
-        //         Индексы точек 0,1,2 → нужны prefixSums_[0..2], их уже 3.
-        // Для замкнутого: 3 точки, 3 расстояния → prefixSums_ = {0, d01, d01+d12, периметр}
-        //         Индексы точек 0,1,2 → нужны prefixSums_[0..2], плюс [3] = периметр.
-        // Таким образом, для незамкнутого размер prefixSums_ уже правильный (n),
-        // ничего удалять не нужно — всё корректно.
     }
 
     /**
      * @brief Возвращает количество точек контура.
      *
-     * Для замкнутого:   prefixSums_.size() - 1  (последний элемент — периметр)
-     * Для незамкнутого: prefixSums_.size()       (каждый элемент — точка)
+     * У замкнутого контура последний элемент prefixSums_ добавляет отрезок
+     * от последней точки до первой и не соответствует новой точке,
+     * поэтому он не учитывается.
+     *
+     * Для замкнутого:   prefixSums_.size() - 1
+     * Для незамкнутого: prefixSums_.size()
      */
-    size_t pointCount() const noexcept
+    size_t getPointCount() const noexcept
     {
         if (prefixSums_.empty())
             return 0;
@@ -89,7 +81,7 @@ private:
      */
     bool isValidIndex(size_t i) const noexcept
     {
-        return i < pointCount();
+        return i < getPointCount();
     }
 
 public:
@@ -98,7 +90,7 @@ public:
      *
      * @param neighborDistances Вектор расстояний:
      *        - незамкнутый контур из n точек: n-1 расстояний
-     *        - замкнутый контур из n точек:   n расстояний (последнее — last→first)
+     *        - замкнутый контур из n точек:   n расстояний (последнее — от последней точки до первой)
      * @param closed Если true, контур замкнутый.
      */
     ContourGeodesicDistances(const std::vector<double>& neighborDistances, bool closed = true)
@@ -119,8 +111,8 @@ public:
     /**
      * @brief Возвращает геодезическое расстояние от начала контура до точки i.
      *
-     * @param i Индекс точки (0 .. getPointCount()-1).
-     * @return Расстояние от точки 0 до точки i, или -1.0 при неверном индексе.
+     * @param i Индекс точки, от 0 до n-1.
+     * @return Расстояние от точки 0 до точки i или -1.0 при неверном индексе.
      */
     double getGeodesicDistance(size_t i) const noexcept
     {
@@ -160,7 +152,7 @@ public:
             return -1.0; // Обратный путь недопустим для незамкнутого контура
 
         // Циклический путь: i → конец → начало → j
-        // prefixSums_.back() = полный периметр
+        // prefixSums_.back() — длина полного обхода контура
         return (prefixSums_.back() - prefixSums_[i]) + prefixSums_[j];
     }
 
@@ -168,7 +160,7 @@ public:
      * @brief Находит индекс точки контура, ближайшей к заданному расстоянию от начала.
      *
      * Использует бинарный поиск по отсортированным префиксным суммам.
-     * Для замкнутого контура при dist >= периметра возвращает индекс 0.
+     * Для замкнутого контура при dist >= длины контура возвращает индекс 0.
      * Для незамкнутого при dist >= длины контура возвращает последний индекс.
      *
      * @param dist Расстояние от начала контура (>= 0).
@@ -176,7 +168,7 @@ public:
      */
     //size_t getIndexByDistance(double dist) const noexcept
     //{
-    //    return getIndexByDistanceInRange(dist, 0, pointCount());
+    //    return getIndexByDistanceInRange(dist, 0, getPointCount());
     //}
     size_t getIndexByDistance(double dist)
     {
@@ -225,7 +217,7 @@ public:
      */
     size_t getIndexByDistanceInRange(double dist, size_t left, size_t right) const noexcept
     {
-        const size_t n = pointCount();
+        const size_t n = getPointCount();
 
         if (n == 0)
             return 0;
@@ -268,15 +260,10 @@ public:
     bool isClosed() const noexcept { return closed_; }
 
     /**
-     * @brief Возвращает полную длину контура (периметр для замкнутого).
+     * @brief Возвращает полную длину контура (для замкнутого — с отрезком от последней точки до первой).
      */
     double getTotalLength() const noexcept
     {
         return prefixSums_.empty() ? 0.0 : prefixSums_.back();
     }
-
-    /**
-     * @brief Возвращает количество точек в контуре.
-     */
-    size_t getPointCount() const noexcept { return pointCount(); }
 };
