@@ -40,11 +40,11 @@ public:
 	Line line_of_rectified_;
 
 
-	float intersection_area_; 
-	float straightened_shape_area_, original_shape_area_; 
-	float jaccard_index_with_straightened_shape_area_, jaccard_index_with_original_shape_area_;
+	float intersection_area_ = 0;
+	float straightened_shape_area_ = 0, original_shape_area_ = 0;
+	float jaccard_index_with_straightened_shape_area_ = 0, jaccard_index_with_original_shape_area_ = 0;
 
-	double cut_time_; 
+	double cut_time_ = 0;
 	double algorithm_time_ = 0; 
 
 	std::vector<cv::Point> start_points_; 
