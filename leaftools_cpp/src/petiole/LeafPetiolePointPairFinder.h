@@ -1,35 +1,12 @@
 #pragma once
 
 #include "./ContourGeodesicDistances.h"
-#include "./EuclideanCND.h"
 #include "./SVM_Classifier.h"
 
 #include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
-#include <opencv2/ml.hpp>
 #include <memory>
-#include <optional>
-#include <vector>
-#include <limits>
 #include <string>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Enums
-// ─────────────────────────────────────────────────────────────────────────────
-
-enum class ErrorCode
-{
-    SUCCESS = 0,
-    INVALID_INDEXES,
-    MIN_GEODESIC_RATIO_INVALID,
-    MAX_GEODESIC_RATIO_INVALID,
-    NO_WHITE_BETWEEN,
-    ZERO_DISTANCE_AB,
-    ZERO_DISTANCE_CD,
-    MIN_WIDTH_STEM_FAIL,
-    STEM_FLATNESS_FAIL,
-    INVALID_T_PARAMETERS,
-};
+#include <vector>
 
 /**
  * @brief Результат проверки геодезического отношения G_min / (G_min + G_max).
@@ -41,30 +18,13 @@ enum class RatioCheck
     TooLarge = 1, ///< Отношение больше верхнего порога
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Data structures
-// ─────────────────────────────────────────────────────────────────────────────
-
 struct LeafPoints
 {
     cv::Point ptA{}, ptB{}, ptS{}, ptC{}, ptD{};
-    cv::Point ptSnakeDeA{}, ptSnakeDeB{};
-};
-
-struct BestPairIndexes
-{
-    int best_i_1 = -1;
-    int best_j_1 = -1;
-    int best_i_2 = -1;
-    int best_j_2 = -1;
-
-    bool hasFirstPair()  const { return best_i_1 >= 0 && best_j_1 >= 0; }
-    bool hasSecondPair() const { return best_i_2 >= 0 && best_j_2 >= 0; }
 };
 
 struct Distances
 {
-    const double MAX_DE = 70;
     double De = 0.0;
     double D_max = 0.0;
     double D_ab = 0.0;
@@ -73,7 +33,7 @@ struct Distances
 
 struct GeodesicParams
 {
-    GeodesicParams(double total_length) 
+    GeodesicParams(double total_length)
         : total_length_(total_length)
     {
     }
@@ -116,16 +76,19 @@ struct Thresholds
     double snake_high_threshold = 0.05; ///< Верхняя граница для snake De поиска
     double snake_low_threshold = 0.02; ///< Нижняя граница для snake De поиска
 
+    double max_De = 70.0; ///< De принимается, только если оно меньше этого значения
+
     // Ширина стебля
     int width_threshold = 20; ///< Минимальная суммарная ширина стебля (D_ab + D_cd)
+
+    // Проверки точек
+    double border_offset = 2.0;   ///< Отступ от A и B вдоль AB в checkBorderPixels, пикселей
+    double t_point_offset = 0.05; ///< Сдвиг точки T за S в checkTPoint, доля длины AS
 
     // Функция phi
     double alpha = 0.3; ///< Вес экспоненциальной составляющей в phi(D)
 
     // Итоговый скоринг T
-    //double w1 = 0.4; ///< Вес T1 в итоговом T
-    //double w2 = 0.4; ///< Вес T2 в итоговом T
-    //double w3 = 0.2; ///< Вес T3 в итоговом T (умножается на 2)
     double w1 = 0.35; ///< Вес T1 в итоговом T
     double w2 = 0.20; ///< Вес T2 в итоговом T
     double w3 = 0.45; ///< Вес T3 в итоговом T (умножается на 2)
@@ -137,7 +100,7 @@ struct Thresholds
     double D_S_rel_tolerance = 0.05; ///< Допуск при поиске второго кандидата: |D_max - D_S1_S2| / D_max
 
     double component_epsilon = 1e-3; ///< Минимальное ненулевое значение T1/T3
-    double T2_min_epsilon = 0.30; ///< Минимальное допустимое значение T2
+    double T2_min = 0.30; ///< Минимальное допустимое значение T2
     double distance_epsilon = 1e-9; ///< Эпсилон для сравнения расстояний с нулём
 };
 
@@ -147,20 +110,22 @@ struct T_Parameters
     double T2 = 0.0;
     double T3 = 0.0;
     double T  = 0.0;
-    double D_ab = 0.0;
-    double D_cd = 0.0;
 
     bool isValid(const Thresholds& thr) const
     {
         return T1 > thr.component_epsilon
-            && T2 > thr.T2_min_epsilon
+            && T2 > thr.T2_min
             && T3 > thr.component_epsilon
             && T > 0.0;
     }
 };
 
 /**
- * @brief Результат работы compareTAndFindD.
+ * @brief Результат findBestPair.
+ *
+ * A и B — края черешка на контуре, S — середина дуги контура между ними
+ * (кончик черешка). При found = false точки содержат нули или
+ * отклонённого кандидата.
  */
 struct FindResult
 {
@@ -168,16 +133,7 @@ struct FindResult
     cv::Point    ptB{};
     cv::Point    ptS{};
     bool         found = false;
-    T_Parameters tp1{};
-    T_Parameters tp2{};
-    cv::Point    ptA2{};
-    cv::Point    ptB2{};
-    cv::Point    ptS2{};
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LeafPetiolePointPairFinder
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * @brief Находит пару точек на контуре листа, соответствующих основанию черешка.
@@ -206,56 +162,13 @@ public:
         const std::string& svm_csv_path = "",
         const Thresholds& thresholds = Thresholds{});
 
-    // ── Основные методы ──────────────────────────────────────────────────────
-
-    /**
-     * @brief Анализирует пару точек контура по индексам и вычисляет T-параметры.
-     * @param i Индекс первой точки.
-     * @param j Индекс второй точки.
-     * @return Код ошибки или SUCCESS.
-     */
-    ErrorCode analyzePairPoints(int i, int j);
-
     /**
      * @brief Выполняет полный перебор пар точек и находит лучшую пару черешка.
      * @return Результат поиска: точки A, B, S и флаг успеха.
      */
     FindResult findBestPair();
 
-    // ── Геттеры ──────────────────────────────────────────────────────────────
-
-    const std::vector<cv::Point>& getContour()   const { return contour_; }
-    const Distances& getDistances()  const { return distances_; }
-    const LeafPoints& getPoints()     const { return leaf_points_; }
-    const T_Parameters& getT()          const { return tparameters_; }
-    const BestPairIndexes& getIndexes()    const { return indexes_; }
-
-    // ── Сеттеры порогов ──────────────────────────────────────────────────────
-
-    void setWidthThreshold(int value)
-    {
-        if (value > 0)
-            thresholds_.width_threshold = value;
-    }
-
-    void setHighThreshold(double value)
-    {
-        thresholds_.high_threshold = std::clamp(value, 0.0, 1.0);
-    }
-
-    void setLowThreshold(double value)
-    {
-        thresholds_.low_threshold = std::clamp(value, 0.0, thresholds_.high_threshold);
-    }
-
-    void setAlpha(double value)
-    {
-        thresholds_.alpha = std::clamp(value, 0.0, 1.0);
-    }
-
 private:
-    // ── Данные ───────────────────────────────────────────────────────────────
-
     cv::Mat                                  binary_image_;
     std::vector<cv::Point>                   contour_;
     std::unique_ptr<ContourGeodesicDistances> gdc_;
@@ -266,42 +179,47 @@ private:
     Distances     distances_;
     GeodesicParams geodesic_;
     Thresholds    thresholds_;
-    T_Parameters  tparameters_;
-    BestPairIndexes indexes_;
-
-    // ── Инициализация ─────────────────────────────────────────────────────────
 
     void findMaxContour();
-    void initSVM(const std::string& model_path, const std::string& csv_path);
 
-    // ── Проверки (constraints) ────────────────────────────────────────────────
+    /**
+     * @brief Загружает модель SVM или обучает её из CSV.
+     *
+     * Сначала загружается модель из model_path. Если загрузить не удалось,
+     * модель обучается по csv_path и сохраняется в model_path.
+     * Если оба пути пустые или неверные, SVM остаётся необученным:
+     * svmPredict() возвращает false, и кандидат в «серой зоне» отклоняется.
+     */
+    void initSVM(const std::string& model_path, const std::string& csv_path);
 
     bool isValidPoint(const cv::Point& pt) const noexcept;
     bool isValidIndices(int i, int j)       const noexcept;
 
     /**
-     * @brief Проверяет, что отрезок AB проходит через белые пиксели.
+     * @brief Проверяет, что отрезок AB проходит внутри листа.
      *
-     * Использует cv::LineIterator для обхода всех пикселей отрезка,
-     * а не только трёх опорных точек.
+     * Проверяются три точки отрезка: середина и середины его половин.
+     * Все три должны быть белыми.
      */
     bool checkWhiteBetween() const;
 
+    /**
+     * @brief Проверяет, что точки рядом с A и B на отрезке AB лежат внутри листа.
+     *
+     * От A к B и от B к A делается шаг на 2 пикселя; оба пикселя должны быть белыми.
+     */
     bool checkBorderPixels() const noexcept;
 
     /**
-     * @brief Проверяет геодезическое отношение G_min / (G_min + G_max).
-     * @param high_threshold Верхняя граница (по умолчанию — основной порог).
+     * @brief Сравнивает геодезическое отношение G_min / (G_min + G_max) с границами.
      */
-    RatioCheck checkGeodesicRatio(double low_threshold = -1.0, double high_threshold = -1.0) const noexcept;
+    RatioCheck checkGeodesicRatio(double low_threshold, double high_threshold) const noexcept;
 
     bool checkMinWidthStem()  const noexcept;
     bool checkStemFlatness()  const noexcept;
 
-    bool checkTPoint();
+    bool checkTPoint() const;
 
-
-    // ── Вычисление метрик ─────────────────────────────────────────────────────
 
     /**
      * @brief Вычисляет геодезические расстояния до опорных точек стебля.
@@ -315,31 +233,53 @@ private:
      */
     StemKeyDistances computeStemKeyDistances(size_t i, size_t j) const;
 
+    /**
+     * @brief Находит точки S, C, D для пары (i, j) и проверяет форму стебля.
+     *
+     * Перед вызовом должны быть заданы leaf_points_.ptA, ptB,
+     * distances_.D_ab и geodesic_ для этой пары.
+     * Заполняет leaf_points_.ptS, ptC, ptD и distances_.D_cd.
+     *
+     * @return true, если пара прошла все проверки: плоскость стебля,
+     *         ширина, граничные пиксели и точка T.
+     */
+    bool checkStemPoints(int i, int j);
+
     double phi(double D) const noexcept;
 
     T_Parameters computeTParameters() const noexcept;
 
     /**
-     * @brief Применяет SVM к набору T-параметров.
-     * @return true, если SVM предсказывает положительный класс.
+     * @brief Применяет SVM к признакам кандидата (T1, T2, T3).
+     *
+     * Используется в findBestPair, когда итоговый балл T лежит между
+     * T_reject_threshold и T_accept_threshold.
+     *
+     * @return true, если SVM относит кандидата к классу +1 (черешок).
+     *         false — класс -1 или SVM не обучен.
      */
     bool svmPredict(const T_Parameters& tp) const;
 
     /**
      * @brief Значение decision function SVM (расстояние до гиперплоскости).
+     *
+     * Используется только по модулю: чем больше |значение|, тем дальше
+     * кандидат от границы классов.
      */
-    float svmDecision(const T_Parameters& tp);
-
-    // ── Внутренняя структура для хранения кандидата ───────────────────────────
+    float svmDecision(const T_Parameters& tp) const;
 
     struct Candidate
     {
         cv::Point    ptA{}, ptB{}, ptS{};
         T_Parameters tp{};
-        double       D_ab = 0.0;
-        int          idx_i = -1, idx_j = -1;
         bool         valid = false;
     };
+
+    /// Число точек контура, при котором перебор ещё идёт по каждой точке.
+    /// Для более длинных контуров берётся каждая k-я точка.
+    static constexpr int max_scan_points = 10000;
+
+    FindResult makeResult(const Candidate& candidate, bool found) const;
 
     /**
      * @brief Выполняет один проход O(n²) по всем парам точек.
