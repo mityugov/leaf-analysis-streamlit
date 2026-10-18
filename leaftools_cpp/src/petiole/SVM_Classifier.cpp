@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 SVM_Classifier::SVM_Classifier(const std::string& model_path)
     : model_path_(model_path)
@@ -27,6 +28,7 @@ bool SVM_Classifier::loadCSV(const std::string& csv_path)
         return false;
     }
 
+    // Число с точкой в качестве разделителя, независимо от локали системы
     auto toFloat = [](const std::string& s) -> float
         {
             std::istringstream iss(s);
@@ -54,7 +56,6 @@ bool SVM_Classifier::loadCSV(const std::string& csv_path)
         std::stringstream        ss(line);
         std::string              token;
         std::vector<std::string> row;
-        row.reserve(4);
 
         while (std::getline(ss, token, ';'))
             row.push_back(token);
@@ -66,25 +67,19 @@ bool SVM_Classifier::loadCSV(const std::string& csv_path)
             continue;
         }
 
-        try
-        {
-            // Метка: только "1" → +1, всё остальное → -1
-            const int label = (row[0] == "1") ? 1 : -1;
-            labels.push_back(label);
-            t1_vec.push_back(toFloat(row[1]));
-            t2_vec.push_back(toFloat(row[2]));
-            t3_vec.push_back(toFloat(row[3]));
-        }
-        catch (const std::exception& e)
-        {
-            std::cerr << "[SVM_Classifier] Строка " << line_number
-                << ": ошибка парсинга (" << e.what() << "), пропускаем.\n";
-        }
+        if (row[0] == "1")
+            labels.push_back(1);
+        else
+            labels.push_back(-1);
+
+        t1_vec.push_back(toFloat(row[1]));
+        t2_vec.push_back(toFloat(row[2]));
+        t3_vec.push_back(toFloat(row[3]));
     }
 
     if (t1_vec.empty())
     {
-        std::cerr << "[SVM_Classifier] Файл не содержит валидных данных: " << csv_path << '\n';
+        std::cerr << "[SVM_Classifier] Файл не содержит данных: " << csv_path << '\n';
         return false;
     }
 
@@ -100,8 +95,6 @@ bool SVM_Classifier::loadCSV(const std::string& csv_path)
         training_labels_.at<int>(i, 0) = labels[i];
     }
 
-    std::cout << "[SVM_Classifier] Загружено " << n
-        << " примеров из " << csv_path << '\n';
     return true;
 }
 
@@ -134,22 +127,18 @@ bool SVM_Classifier::train()
     }
 
     is_trained_ = true;
-    std::cout << "[SVM_Classifier] Модель обучена. "
-        << "Число опорных векторов: " << svm_->getSupportVectors().rows << '\n';
 
     if (!model_path_.empty())
-    {
         svm_->save(model_path_);
-        std::cout << "[SVM_Classifier] Модель сохранена: " << model_path_ << '\n';
-    }
 
-    detectDecisionSignFlip();
     return true;
 }
 
 bool SVM_Classifier::loadModel(const std::string& model_path)
 {
-    const std::string& path = model_path.empty() ? model_path_ : model_path;
+    std::string path = model_path;
+    if (path.empty())
+        path = model_path_;
 
     if (path.empty())
     {
@@ -157,25 +146,25 @@ bool SVM_Classifier::loadModel(const std::string& model_path)
         return false;
     }
 
+    // Если файла нет или он повреждён, OpenCV бросает cv::Exception
     try
     {
         svm_ = cv::ml::SVM::load(path);
-        is_trained_ = true;
-        std::cout << "[SVM_Classifier] Модель загружена: " << path << '\n';
-        detectDecisionSignFlip();
-        return true;
     }
     catch (const cv::Exception& e)
     {
-        std::cerr << "[SVM_Classifier] Ошибка загрузки модели (OpenCV): "
-            << e.what() << '\n';
+        std::cerr << "[SVM_Classifier] Ошибка загрузки модели: " << e.what() << '\n';
+        return false;
     }
-    catch (const std::exception& e)
+
+    if (svm_.empty())
     {
-        std::cerr << "[SVM_Classifier] Ошибка загрузки модели: "
-            << e.what() << '\n';
+        std::cerr << "[SVM_Classifier] Не удалось загрузить модель: " << path << '\n';
+        return false;
     }
-    return false;
+
+    is_trained_ = true;
+    return true;
 }
 
 int SVM_Classifier::predict(const cv::Vec3f& features) const
@@ -191,31 +180,6 @@ int SVM_Classifier::predict(const cv::Vec3f& features) const
     return static_cast<int>(result.at<float>(0, 0));
 }
 
-std::vector<int> SVM_Classifier::predict(const cv::Mat& samples) const
-{
-    if (!is_trained_)
-    {
-        std::cerr << "[SVM_Classifier] Модель не обучена.\n";
-        return {};
-    }
-
-    if (samples.cols != 3 || samples.type() != CV_32F)
-    {
-        std::cerr << "[SVM_Classifier] predict(): ожидается матрица N x 3 CV_32F.\n";
-        return {};
-    }
-
-    cv::Mat results;
-    svm_->predict(samples, results);
-
-    std::vector<int> predictions;
-    predictions.reserve(results.rows);
-    for (int i = 0; i < results.rows; ++i)
-        predictions.push_back(static_cast<int>(results.at<float>(i, 0)));
-
-    return predictions;
-}
-
 float SVM_Classifier::decisionFunction(const cv::Vec3f& features) const
 {
     if (!is_trained_)
@@ -224,53 +188,8 @@ float SVM_Classifier::decisionFunction(const cv::Vec3f& features) const
         return 0.0f;
     }
 
-    float score = svm_->predict(
+    return svm_->predict(
         makeFeatureRow(features),
         cv::noArray(),
         cv::ml::StatModel::RAW_OUTPUT);
-
-    return decision_sign_flipped_ ? -score : score;
-}
-
-bool SVM_Classifier::detectDecisionSignFlip()
-{
-    // Для определения знака используем обучающие данные, если они есть.
-    // Если модель загружена без CSV (loadModel без предшествующего loadCSV),
-    // проверка невозможна — оставляем decision_sign_flipped_ = false.
-    if (!is_trained_ || training_features_.empty() || training_labels_.empty())
-        return false;
-
-    double sum_pos = 0.0, sum_neg = 0.0;
-    int    cnt_pos = 0, cnt_neg = 0;
-
-    for (int i = 0; i < training_features_.rows; ++i)
-    {
-        const float score = svm_->predict(
-            training_features_.row(i),
-            cv::noArray(),
-            cv::ml::StatModel::RAW_OUTPUT);
-
-        if (training_labels_.at<int>(i, 0) == 1)
-        {
-            sum_pos += score;
-            ++cnt_pos;
-        }
-        else
-        {
-            sum_neg += score;
-            ++cnt_neg;
-        }
-    }
-
-    if (cnt_pos == 0 || cnt_neg == 0)
-    {
-        std::cerr << "[SVM_Classifier] detectDecisionSignFlip: "
-            "один из классов отсутствует в обучающих данных.\n";
-        return false;
-    }
-
-    // Если среднее значение RAW_OUTPUT у класса +1 меньше, чем у -1,
-    // знак нужно инвертировать.
-    decision_sign_flipped_ = (sum_pos / cnt_pos) < (sum_neg / cnt_neg);
-    return true;
 }
