@@ -101,6 +101,35 @@ def apply_mask_to_color(crop_bgr, mask):
     return out
 
 
+def fit_to_box(img_bgr, box_h, box_w):
+    """
+    Вписывает изображение в рамку box_h x box_w с сохранением пропорций
+    и белыми полями по краям.
+
+    Изображения симметрии обрезаны по рамке листа и по размеру не совпадают
+    с изображением листа; так они занимают на странице то же место.
+    """
+    h, w = img_bgr.shape[:2]
+    scale = min(box_h / h, box_w / w)
+    new_w = max(int(round(w * scale)), 1)
+    new_h = max(int(round(h * scale)), 1)
+    resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+
+    canvas = np.full((box_h, box_w, 3), 255, np.uint8)
+    y0 = (box_h - new_h) // 2
+    x0 = (box_w - new_w) // 2
+    canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
+    return canvas
+
+
+# Изображения, которые возвращает поиск оси симметрии, в порядке показа.
+SYMMETRY_VIEWS = [
+    ("axis", "Ось симметрии"),
+    ("straightened", "Распрямлённый лист"),
+    ("reflected", "Лист и его отражение"),
+]
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  ЗАГРУЗКА ФАЙЛОВ
 # ═══════════════════════════════════════════════════════════════════════════
@@ -136,14 +165,17 @@ total_leaves = sum(len(c["leaves"]) for c in cuts.values())
 #    sel_leaf — выбранный лист на каждом скане        {имя файла: индекс}
 #    seg      — результаты сегментации                {(файл, индекс): res}
 #    petiole  — результаты отрезания черешка          {(файл, индекс): res}
+#    symmetry — результаты поиска оси симметрии       {(файл, индекс): res}
+#    sym_page — номер показанного изображения симметрии {(файл, индекс): 0..2}
 # ═══════════════════════════════════════════════════════════════════════════
 
-#    view_bin / view_nopet — положение переключателей показа.
+#    view_bin / view_nopet / view_sym — положение переключателей показа.
 #
 #    Хранить их приходится самим: Streamlit стирает состояние виджетов,
 #    которых нет в текущей отрисовке, а на странице одновременно живёт
 #    только один выбранный лист. Ключа виджета для этого мало.
-for name in ("sel_leaf", "seg", "petiole", "view_bin", "view_nopet"):
+for name in ("sel_leaf", "seg", "petiole", "symmetry", "sym_page",
+             "view_bin", "view_nopet", "view_sym"):
     if not isinstance(st.session_state.get(name), dict):
         st.session_state[name] = {}
 
@@ -159,6 +191,12 @@ def remember_toggle(store_name, store_key, widget_key):
     не трогает — он и остаётся источником правды.
     """
     st.session_state[store_name][store_key] = st.session_state[widget_key]
+
+
+def shift_sym_page(leaf_key, step):
+    """Переключает изображение симметрии на соседнее (по кругу)."""
+    page = st.session_state.sym_page.get(leaf_key, 0)
+    st.session_state.sym_page[leaf_key] = (page + step) % len(SYMMETRY_VIEWS)
 
 
 def segment_scan(fname):
@@ -257,6 +295,7 @@ for tab, fname in zip(tabs, names):
         leaf = leaves[idx]
         seg_res = st.session_state.seg.get((fname, idx))
         cut_res = st.session_state.petiole.get((fname, idx))
+        sym_res = st.session_state.symmetry.get((fname, idx))
 
         with col_ctl:
             st.markdown(f"**{leaf_name(fname, idx)}**")
@@ -324,30 +363,98 @@ for tab, fname in zip(tabs, names):
             if cut_res is not None and not cut_res.get("found"):
                 st.caption("⚠ Точки черенка не найдены.")
 
+            # Маска, на которой считаем признаки: пластина или весь лист.
+            leaf_mask = None
+            if seg_res is not None and seg_res["leaves"]:
+                leaf_mask = seg_res["leaves"][0]["mask"]
+
+            active_mask = leaf_mask
+            if hide_petiole and petiole_ready:
+                active_mask = cut_res["blade"]
+
             st.markdown("")
 
-            # 3. Профиль вращения — считается по той маске, что показана.
+            # 3. Ось симметрии — считается по той маске, что показана.
+            if st.button("⟷ Ось симметрии", key=f"symbtn_{fname}_{idx}",
+                         width="stretch",
+                         disabled=no_mask, help=need_seg):
+                try:
+                    import leaftools
+                    with st.spinner("Поиск оси симметрии…"):
+                        sym_res = leaftools.symmetry(active_mask)
+                    # Запоминаем, по какой маске считали: подпись под
+                    # картинкой покажет, с черенком лист или без.
+                    sym_res["without_petiole"] = active_mask is not leaf_mask
+                    st.session_state.symmetry[(fname, idx)] = sym_res
+                    st.session_state.sym_page[(fname, idx)] = 0
+                    st.rerun()
+                except ImportError:
+                    st.error("Модуль leaftools не установлен.")
+                except Exception as e:
+                    st.error(f"Не удалось найти ось симметрии: {e}")
+
+            symmetry_ready = sym_res is not None and sym_res.get("found")
+            sym_key = f"sym_{fname}_{idx}"
+            st.checkbox(
+                "Симметрия",
+                value=st.session_state.view_sym.get((fname, idx), False),
+                key=sym_key,
+                disabled=not symmetry_ready,
+                help=None if symmetry_ready else "Сначала найдите ось симметрии",
+                on_change=remember_toggle,
+                args=("view_sym", (fname, idx), sym_key),
+            )
+            show_symmetry = st.session_state.view_sym.get((fname, idx), False)
+
+            if sym_res is not None and not sym_res.get("found"):
+                st.caption("⚠ Ось симметрии не найдена.")
+
+            st.markdown("")
+
+            # 4. Профиль вращения — считается по той маске, что показана.
             want_profile = st.button(
                 "📈 Профиль вращения", key=f"prof_{fname}_{idx}",
                 width="stretch",
                 disabled=no_mask, help=need_seg)
 
         # ── В центре: выбранный лист в нужном виде ──────────────────────
-        # Показ зависит от двух переключателей:
+        # Показ зависит от переключателей:
+        #   симметрия     — изображения оси симметрии со стрелками
+        #                   переключения; важнее остальных переключателей;
         #   бинарный вид  — маска вместо цветного изображения;
         #   без черенка   — вместо полной маски берётся пластина, а на
         #                   цветном изображении черешок стирается по ней.
         with col_leaf:
-            leaf_mask = None
-            if seg_res is not None and seg_res["leaves"]:
-                leaf_mask = seg_res["leaves"][0]["mask"]
+            if show_symmetry and symmetry_ready:
+                page = st.session_state.sym_page.get((fname, idx), 0)
+                view_key, view_title = SYMMETRY_VIEWS[page]
+                if sym_res["without_petiole"]:
+                    mask_note = "без черенка"
+                else:
+                    mask_note = "с черенком"
+                box_h, box_w = leaf["crop"].shape[:2]
+                st.image(rgb(fit_to_box(sym_res[view_key], box_h, box_w)),
+                         caption=f"{view_title} · {page + 1}/{len(SYMMETRY_VIEWS)}"
+                                 f" · {mask_note}",
+                         width="stretch")
 
-            # Маска, на которой считаем признаки: пластина или весь лист.
-            active_mask = leaf_mask
-            if hide_petiole and petiole_ready:
-                active_mask = cut_res["blade"]
-
-            if show_binary and active_mask is not None:
+                prev_col, info_col, next_col = st.columns([1, 3, 1])
+                with prev_col:
+                    st.button("◀", key=f"symprev_{fname}_{idx}",
+                              width="stretch",
+                              on_click=shift_sym_page,
+                              args=((fname, idx), -1))
+                with info_col:
+                    st.markdown(
+                        f"Жаккар: **{sym_res['jaccard_straightened']:.3f}** "
+                        f"(по исходной площади "
+                        f"{sym_res['jaccard_original']:.3f})")
+                with next_col:
+                    st.button("▶", key=f"symnext_{fname}_{idx}",
+                              width="stretch",
+                              on_click=shift_sym_page,
+                              args=((fname, idx), 1))
+            elif show_binary and active_mask is not None:
                 st.image(active_mask,
                          caption=leaf_name(fname, idx) + " · маска",
                          width="stretch", clamp=True)
