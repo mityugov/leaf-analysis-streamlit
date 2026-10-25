@@ -1,12 +1,14 @@
-import numpy as np
-import cv2
-import pandas as pd
-import streamlit as st
-import altair as alt
+import base64
+from html import escape
 from pathlib import Path
 
+import altair as alt
+import cv2
+import numpy as np
+import pandas as pd
+import streamlit as st
+
 from core import segmentation
-from core.leaf_splitter import split_leaf_scan_into_parts
 from components.leaf_picker import leaf_picker
 
 # Конфигурация страницы: заголовок вкладки браузера, иконка, широкий макет.
@@ -15,112 +17,10 @@ st.set_page_config(page_title="Анализ листьев", page_icon="🍃", l
 # Папка с моделью SVM для поиска черешка (лежит рядом с app.py).
 MODELS_DIR = Path(__file__).parent / "models"
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Тяжёлые вычисления
-#  @st.cache_resource — модель, живёт всю сессию.
-#  @st.cache_data — результат по входу: тот же вход не считается заново.
-# ═══════════════════════════════════════════════════════════════════════════
-
-@st.cache_resource(show_spinner="Обучение модели фон/лист…")
-def get_svm():
-    return segmentation.load_svm()
-
-
-@st.cache_data(show_spinner=False)
-def cut_leaves(image_bytes: bytes):
-    """Декодирует скан и нарезает его на отдельные листья."""
-    arr = np.frombuffer(image_bytes, np.uint8)
-    image_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    if image_bgr is None:
-        return None
-
-    leaves = split_leaf_scan_into_parts(image_bgr, mask_background=True)
-    return {"scan": image_bgr, "leaves": leaves}
-
-
-@st.cache_data(show_spinner=False)
-def segment_leaf(leaf_bytes: bytes):
-    """Сегментация одного листа (SVM: фон/лист)."""
-    arr = np.frombuffer(leaf_bytes, np.uint8)
-    crop = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-    return segmentation.segment(crop, get_svm())
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Вспомогательные функции
-# ═══════════════════════════════════════════════════════════════════════════
-
-def encode(img):
-    """Кодирует изображение в PNG-байты (для кэшируемой функции)."""
-    ok, buf = cv2.imencode(".png", img)
-    return buf.tobytes()
-
-
-def rgb(img):
-    """OpenCV хранит BGR, Streamlit ждёт RGB — конвертируем перед показом."""
-    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-
-def leaf_name(file_name: str, leaf_idx: int) -> str:
-    """Имя листа: "TCP13014.bmp" + индекс 0 -> "TCP13014_1.bmp"."""
-    p = Path(file_name)
-    return f"{p.stem}_{leaf_idx + 1}{p.suffix or '.bmp'}"
-
-
-def leaf_zones(leaves):
-    """
-    Контуры листьев для компонента.
-
-    Берём поле "contour" из сплиттера; если его нет (старая версия
-    leaf_splitter.py) — строим прямоугольник по bbox, чтобы страница
-    всё равно работала.
-    """
-    zones = []
-    for leaf in leaves:
-        contour = leaf.get("contour")
-        if contour is not None:
-            zones.append(contour)
-        else:
-            x, y, w, h = leaf["bbox"]
-            zones.append(np.array(
-                [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], np.int32))
-    return zones
-
-
-def apply_mask_to_color(crop_bgr, mask):
-    """
-    Оставляет на цветном изображении только то, что отмечено маской,
-    остальное закрашивает белым.
-
-    Нужно для показа цветного листа без черешка: на цветной картинке
-    черешок никуда не девается сам — его надо стереть по маске пластины.
-    """
-    out = crop_bgr.copy()
-    out[mask == 0] = (255, 255, 255)
-    return out
-
-
-def fit_to_box(img_bgr, box_h, box_w):
-    """
-    Вписывает изображение в рамку box_h x box_w с сохранением пропорций
-    и белыми полями по краям.
-
-    Изображения симметрии обрезаны по рамке листа и по размеру не совпадают
-    с изображением листа; так они занимают на странице то же место.
-    """
-    h, w = img_bgr.shape[:2]
-    scale = min(box_h / h, box_w / w)
-    new_w = max(int(round(w * scale)), 1)
-    new_h = max(int(round(h * scale)), 1)
-    resized = cv2.resize(img_bgr, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-
-    canvas = np.full((box_h, box_w, 3), 255, np.uint8)
-    y0 = (box_h - new_h) // 2
-    x0 = (box_w - new_w) // 2
-    canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
-    return canvas
-
+# Сторона квадрата, в который вписывается изображение листа в центральной
+# колонке, пикселей. На странице квадрат растягивается на ширину колонки,
+# поэтому высота изображения не зависит от формы листа.
+LEAF_VIEW_SIZE = 800
 
 # Изображения, которые возвращает поиск оси симметрии, в порядке показа.
 SYMMETRY_VIEWS = [
@@ -130,9 +30,122 @@ SYMMETRY_VIEWS = [
 ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ЗАГРУЗКА ФАЙЛОВ
-# ═══════════════════════════════════════════════════════════════════════════
+# Тяжёлые вычисления.
+#   @st.cache_resource — модель, живёт всю сессию;
+#   @st.cache_data     — результат по входу: тот же вход не считается заново.
+
+@st.cache_resource(show_spinner="Обучение модели фон/лист…")
+def get_svm():
+    return segmentation.load_svm()
+
+
+@st.cache_data(show_spinner=False)
+def load_scan(image_bytes: bytes):
+    """
+    Декодирует файл скана в изображение BGR.
+
+    Возвращает None, если файл не является изображением.
+    """
+    arr = np.frombuffer(image_bytes, np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+
+@st.cache_data(show_spinner=False)
+def segment_scan_image(image_bytes: bytes):
+    """
+    Сегментация всего скана (SVM: фон/лист).
+
+    Возвращает маску всего скана и список листьев: вырез, маска, рамка
+    и контур каждого листа в координатах скана.
+    """
+    return segmentation.segment(load_scan(image_bytes), get_svm())
+
+
+# Вспомогательные функции.
+
+def leaf_name(file_name: str, leaf_idx: int) -> str:
+    """Имя листа: "TCP13014.bmp" + индекс 0 -> "TCP13014_1.bmp"."""
+    p = Path(file_name)
+    return f"{p.stem}_{leaf_idx + 1}{p.suffix or '.bmp'}"
+
+
+def apply_mask_to_color(crop_bgr, mask):
+    """
+    Оставляет на цветном изображении только то, что отмечено маской,
+    остальное закрашивает белым.
+
+    Используется для показа цветного листа без черешка: черешок стирается
+    по маске пластины.
+    """
+    out = crop_bgr.copy()
+    out[mask == 0] = (255, 255, 255)
+    return out
+
+
+def fit_to_box(image, box_h, box_w, background=(255, 255, 255)):
+    """
+    Вписывает изображение в рамку box_h x box_w с сохранением пропорций
+    и полями цвета background по краям.
+
+    Все изображения листа (цветное, маска, симметрия) вписываются в квадрат
+    LEAF_VIEW_SIZE: длинный лист не уходит вниз, а при переключении видов
+    изображение не меняет размер.
+
+    image — изображение BGR или одноканальная маска; результат — BGR uint8.
+    """
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
+    h, w = image.shape[:2]
+    scale = min(box_h / h, box_w / w)
+    new_w = max(int(round(w * scale)), 1)
+    new_h = max(int(round(h * scale)), 1)
+
+    # При уменьшении INTER_AREA сглаживает без ряби; при увеличении
+    # INTER_NEAREST сохраняет чёткие края маски и линии оси.
+    if scale < 1:
+        interpolation = cv2.INTER_AREA
+    else:
+        interpolation = cv2.INTER_NEAREST
+    resized = cv2.resize(image, (new_w, new_h), interpolation=interpolation)
+
+    canvas = np.full((box_h, box_w, 3), background, np.uint8)
+    y0 = (box_h - new_h) // 2
+    x0 = (box_w - new_w) // 2
+    canvas[y0:y0 + new_h, x0:x0 + new_w] = resized
+    return canvas
+
+
+def show_leaf_image(image_bgr, caption: str):
+    """
+    Выводит изображение BGR uint8 с подписью.
+
+    Изображение вставляется в страницу как PNG в data-URL. В отличие от
+    st.image, браузеру не нужен отдельный запрос к серверу Streamlit:
+    такой запрос мог прийти уже после того, как Streamlit удалил файл
+    прошлого прогона, и тогда вместо листа показывалась «битая» картинка.
+    """
+    ok, buffer = cv2.imencode(".png", image_bgr)
+    if not ok:
+        st.error("Не удалось закодировать изображение листа")
+        return
+
+    b64 = base64.b64encode(buffer.tobytes()).decode("ascii")
+    # Подпись экранируется: символы < и " в имени файла не ломают HTML.
+    safe_caption = escape(caption)
+    st.markdown(
+        '<figure style="margin:0;width:100%;">'
+        f'<img src="data:image/png;base64,{b64}" alt="{safe_caption}" '
+        'style="display:block;width:100%;height:auto;object-fit:contain;'
+        'border-radius:8px;"/>'
+        f'<figcaption style="text-align:center;opacity:.75;'
+        f'font-size:.9rem;margin-top:6px;">{safe_caption}</figcaption>'
+        '</figure>',
+        unsafe_allow_html=True,
+    )
+
+
+# Загрузка файлов.
 
 st.title("🍃 Анализ листьев")
 
@@ -143,37 +156,38 @@ uploaded = st.file_uploader(
 )
 
 if not uploaded:
-    st.info("Выберите изображение(я) — листья нарежутся автоматически.")
+    st.info("Выберите изображение(я) скана.")
     st.stop()
 
-cuts = {}
+# При загрузке скан только декодируется. Листья находит сегментация,
+# которая запускается кнопкой.
+scans = {}       # имя файла -> изображение BGR
+scan_bytes = {}  # имя файла -> байты файла (ключ кэша сегментации)
 for f in uploaded:
-    res = cut_leaves(f.getvalue())
-    if res is not None:
-        cuts[f.name] = res
+    data = f.getvalue()
+    image = load_scan(data)
+    if image is not None:
+        scans[f.name] = image
+        scan_bytes[f.name] = data
 
-if not cuts:
+if not scans:
     st.error("Не удалось прочитать ни одного изображения.")
     st.stop()
 
-names = list(cuts.keys())
-total_leaves = sum(len(c["leaves"]) for c in cuts.values())
+names = list(scans.keys())
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  СОСТОЯНИЕ СЕССИИ
-#    sel_leaf — выбранный лист на каждом скане        {имя файла: индекс}
-#    seg      — результаты сегментации                {(файл, индекс): res}
-#    petiole  — результаты отрезания черешка          {(файл, индекс): res}
-#    symmetry — результаты поиска оси симметрии       {(файл, индекс): res}
-#    sym_page — номер показанного изображения симметрии {(файл, индекс): 0..2}
-# ═══════════════════════════════════════════════════════════════════════════
-
-#    view_bin / view_nopet / view_sym — положение переключателей показа.
+# Состояние сессии.
+#   sel_leaf — выбранный лист на каждом скане            {имя файла: индекс}
+#   seg      — результаты сегментации сканов             {имя файла: res}
+#   petiole  — результаты отрезания черешка              {(файл, индекс): res}
+#   symmetry — результаты поиска оси симметрии           {(файл, индекс): res}
+#   sym_page — номер показанного изображения симметрии   {(файл, индекс): 0..2}
+#   view_bin / view_nopet / view_sym — положение переключателей показа.
 #
-#    Хранить их приходится самим: Streamlit стирает состояние виджетов,
-#    которых нет в текущей отрисовке, а на странице одновременно живёт
-#    только один выбранный лист. Ключа виджета для этого мало.
+# Положение переключателей хранится в отдельных словарях: Streamlit стирает
+# состояние виджетов, которых нет в текущей отрисовке, а на странице
+# одновременно показан только один выбранный лист.
 for name in ("sel_leaf", "seg", "petiole", "symmetry", "sym_page",
              "view_bin", "view_nopet", "view_sym"):
     if not isinstance(st.session_state.get(name), dict):
@@ -182,13 +196,11 @@ for name in ("sel_leaf", "seg", "petiole", "symmetry", "sym_page",
 
 def remember_toggle(store_name, store_key, widget_key):
     """
-    Переносит положение переключателя в наше хранилище.
+    Переносит положение переключателя в словарь store_name.
 
-    Вызывается только когда пользователь действительно щёлкнул по
-    чекбоксу. Возвращаемое значение самого виджета мы не используем:
-    Streamlit стирает состояние виджетов, исчезнувших с экрана, и после
-    переключения листьев оно приходит сброшенным. Словарь же Streamlit
-    не трогает — он и остаётся источником правды.
+    Вызывается только при щелчке по чекбоксу. Значение самого виджета
+    после переключения листьев приходит сброшенным, поэтому положение
+    переключателя читается из словаря.
     """
     st.session_state[store_name][store_key] = st.session_state[widget_key]
 
@@ -200,141 +212,139 @@ def shift_sym_page(leaf_key, step):
 
 
 def segment_scan(fname):
-    """Сегментирует все листья одного скана."""
-    for i, leaf in enumerate(cuts[fname]["leaves"]):
-        st.session_state.seg[(fname, i)] = segment_leaf(encode(leaf["crop"]))
+    """Сегментирует скан целиком."""
+    st.session_state.seg[fname] = segment_scan_image(scan_bytes[fname])
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ВЕРХНЯЯ ПАНЕЛЬ: сегментация всех сканов сразу + общий прогресс
-# ═══════════════════════════════════════════════════════════════════════════
+# Верхняя панель: сегментация всех сканов сразу и общий прогресс.
 
-n_done = len(st.session_state.seg)
+not_segmented = [fname for fname in names if fname not in st.session_state.seg]
+n_done = len(names) - len(not_segmented)
 
 top_l, top_r = st.columns([1, 3])
 with top_l:
     if st.button("▶ Сегментировать всё", type="primary",
-                 width="stretch"):
+                 width="stretch", disabled=not not_segmented):
         bar = st.progress(0.0, text="Сегментация…")
-        done = 0
-        for fname in names:
-            for i, leaf in enumerate(cuts[fname]["leaves"]):
-                bar.progress(done / max(total_leaves, 1),
-                             text=f"Сегментация: {leaf_name(fname, i)}")
-                st.session_state.seg[(fname, i)] = segment_leaf(
-                    encode(leaf["crop"]))
-                done += 1
+        for done, fname in enumerate(not_segmented):
+            bar.progress(done / len(not_segmented),
+                         text=f"Сегментация: {fname}")
+            segment_scan(fname)
         bar.empty()
         st.rerun()
 with top_r:
-    st.progress(n_done / max(total_leaves, 1),
-                text=f"Сегментировано листьев: {n_done} из {total_leaves}")
+    st.progress(n_done / len(names),
+                text=f"Сегментировано сканов: {n_done} из {len(names)}")
 
 st.markdown("---")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ВКЛАДКИ ПО СКАНАМ
+# Вкладки по сканам.
 #
-#  Streamlit выполняет код ВСЕХ вкладок сразу, а браузер прячет неактивные.
-#  Поэтому здесь не должно быть тяжёлых вычислений: сегментация, черешок
-#  и дескриптор запускаются только по нажатию кнопки, результат кладётся
-#  в session_state и переиспользуется.
-# ═══════════════════════════════════════════════════════════════════════════
-
-tabs = st.tabs([f"{fname} ({len(cuts[fname]['leaves'])})" for fname in names])
+# Streamlit выполняет код всех вкладок сразу, а браузер прячет неактивные.
+# Поэтому здесь нет тяжёлых вычислений: сегментация, черешок, симметрия
+# и дескриптор запускаются по кнопке, а результат хранится в session_state.
+#
+# Названия вкладок не меняются после сегментации: при смене названий
+# Streamlit переключил бы страницу на первую вкладку.
+tabs = st.tabs(names)
 
 for tab, fname in zip(tabs, names):
     with tab:
-        leaves = cuts[fname]["leaves"]
+        seg_res = st.session_state.seg.get(fname)
+        leaves = seg_res["leaves"] if seg_res is not None else []
         k = len(leaves)
-
-        if k == 0:
-            st.warning("Листья не найдены. Проверьте контраст с фоном.")
-            continue
 
         col_scan, col_leaf, col_ctl = st.columns([2, 2, 1.3])
 
-        # ── Слева: скан с подсветкой листьев ────────────────────────────
+        # Слева: скан с подсветкой листьев. До сегментации контуров нет,
+        # и выбирать на скане нечего.
         with col_scan:
             clicked = leaf_picker(
-                scan_bgr=cuts[fname]["scan"],
-                contours=leaf_zones(leaves),
+                scan_bgr=scans[fname],
+                contours=[leaf["contour"] for leaf in leaves],
                 labels=[leaf_name(fname, i) for i in range(k)],
                 selected=st.session_state.sel_leaf.get(fname),
                 key=f"picker_{fname}",
             )
-            st.caption("Кликните по листу, чтобы открыть его справа.")
+            if seg_res is None:
+                st.caption("Сегментируйте скан — после этого листья можно "
+                           "будет выбирать кликом.")
+            else:
+                st.caption("Кликните по листу, чтобы открыть его справа.")
 
+        # Индекс приходит только по клику и проверяется: он пришёл из браузера.
         if clicked is not None:
-            st.session_state.sel_leaf[fname] = clicked
+            clicked = int(clicked)
+            if 0 <= clicked < k:
+                st.session_state.sel_leaf[fname] = clicked
 
         idx = st.session_state.sel_leaf.get(fname)
 
-        # ── Справа: кнопки и переключатели ──────────────────────────────
-        # Каждой операции — кнопка (посчитать) и чекбокс (показать).
-        # Чекбокс заблокирован, пока нечего показывать.
+        # Справа: кнопки и переключатели. Каждой операции соответствуют
+        # кнопка (посчитать) и чекбокс (показать); чекбокс заблокирован,
+        # пока показывать нечего.
         with col_ctl:
-            # Сегментация относится ко ВСЕМУ скану, а не к выбранному листу,
-            # поэтому кнопка доступна сразу — ещё до того, как лист выбран.
-            done_here = sum(1 for i in range(k)
-                            if (fname, i) in st.session_state.seg)
-            if st.button(f"▶ Сегментировать скан ({done_here}/{k})",
-                         key=f"seg_{fname}", width="stretch",
-                         type="secondary" if done_here == k else "primary"):
-                with st.spinner("Сегментация…"):
-                    segment_scan(fname)
-                st.rerun()
+            # Сегментация относится ко всему скану, а не к выбранному листу.
+            # Результат кэшируется по содержимому файла, поэтому повторная
+            # сегментация того же скана не нужна.
+            if seg_res is None:
+                if st.button("▶ Сегментировать скан", key=f"seg_{fname}",
+                             width="stretch", type="primary"):
+                    with st.spinner("Сегментация…"):
+                        segment_scan(fname)
+                    st.rerun()
+            else:
+                st.button(f"✔ Сегментировано, листьев: {k}",
+                          key=f"seg_{fname}", width="stretch", disabled=True)
 
         # Дальше всё привязано к выбранному листу.
-        if idx is None or idx >= k:
+        if seg_res is None:
+            with col_leaf:
+                st.info("Скан ещё не сегментирован.")
+            continue
+
+        if k == 0:
+            with col_leaf:
+                st.warning("Листья не найдены. Проверьте контраст с фоном.")
+            continue
+
+        if idx is None or not (0 <= idx < k):
             with col_leaf:
                 st.info("Лист не выбран — кликните по листу на скане.")
             continue
 
         leaf = leaves[idx]
-        seg_res = st.session_state.seg.get((fname, idx))
         cut_res = st.session_state.petiole.get((fname, idx))
         sym_res = st.session_state.symmetry.get((fname, idx))
 
         with col_ctl:
             st.markdown(f"**{leaf_name(fname, idx)}**")
 
-            # Пока лист не сегментирован, считать нечего: и черешок, и
-            # профиль работают по маске. Держим кнопки заблокированными
-            # и объясняем причину в подсказке.
-            no_mask = seg_res is None or not seg_res["leaves"]
-            need_seg = "Сначала сегментируйте скан" if no_mask else None
-
             # Бинарный вид — способ смотреть на скан, поэтому положение
             # переключателя общее для всех его листьев (ключ в словаре —
-            # имя файла). Если маски ещё нет, чекбокс заблокирован, но
-            # значение сохраняется и применится сразу после сегментации.
+            # имя файла).
             bin_key = f"bin_{fname}_{idx}"
             st.checkbox(
                 "Бинарный вид",
                 value=st.session_state.view_bin.get(fname, False),
                 key=bin_key,
-                disabled=no_mask, help=need_seg,
                 on_change=remember_toggle,
                 args=("view_bin", fname, bin_key),
             )
-            # Читаем из словаря, а не из возврата чекбокса — см. пояснение
-            # в remember_toggle.
             show_binary = st.session_state.view_bin.get(fname, False)
 
             st.markdown("")
 
-            # 2. Отрезание черешка → разблокирует показ без черешка.
+            # Отрезание черешка разблокирует показ без черешка.
             if st.button("✂ Удалить черенок", key=f"cutbtn_{fname}_{idx}",
-                         width="stretch",
-                         disabled=no_mask, help=need_seg):
+                         width="stretch"):
                 try:
                     import leaftools
                     with st.spinner("Поиск черенка…"):
                         st.session_state.petiole[(fname, idx)] = \
                             leaftools.cut_petiole(
-                                seg_res["leaves"][0]["mask"],
+                                leaf["mask"],
                                 svm_model_path=str(MODELS_DIR / "svm_model.xml"),
                                 svm_csv_path=str(MODELS_DIR / "SVM_train_7_1.csv"))
                     st.rerun()
@@ -344,10 +354,8 @@ for tab, fname in zip(tabs, names):
                     st.error(f"Не удалось отрезать черенок: {e}")
 
             petiole_ready = cut_res is not None and cut_res.get("found")
-            # Отрезание черенка делается для каждого листа отдельно,
-            # поэтому и положение переключателя своё у каждого: вернувшись
-            # к листу, увидим галочку на месте, а у соседнего, где черенок
-            # ещё не отрезан, она снята.
+            # Черешок отрезается для каждого листа отдельно, поэтому
+            # и положение переключателя хранится для каждого листа.
             nopet_key = f"nopet_{fname}_{idx}"
             st.checkbox(
                 "Без черенка",
@@ -363,27 +371,23 @@ for tab, fname in zip(tabs, names):
             if cut_res is not None and not cut_res.get("found"):
                 st.caption("⚠ Точки черенка не найдены.")
 
-            # Маска, на которой считаем признаки: пластина или весь лист.
-            leaf_mask = None
-            if seg_res is not None and seg_res["leaves"]:
-                leaf_mask = seg_res["leaves"][0]["mask"]
-
+            # Маска, по которой считаются признаки: пластина или весь лист.
+            leaf_mask = leaf["mask"]
             active_mask = leaf_mask
             if hide_petiole and petiole_ready:
                 active_mask = cut_res["blade"]
 
             st.markdown("")
 
-            # 3. Ось симметрии — считается по той маске, что показана.
+            # Ось симметрии считается по той маске, что показана.
             if st.button("⟷ Ось симметрии", key=f"symbtn_{fname}_{idx}",
-                         width="stretch",
-                         disabled=no_mask, help=need_seg):
+                         width="stretch"):
                 try:
                     import leaftools
                     with st.spinner("Поиск оси симметрии…"):
                         sym_res = leaftools.symmetry(active_mask)
-                    # Запоминаем, по какой маске считали: подпись под
-                    # картинкой покажет, с черенком лист или без.
+                    # Подпись под изображением показывает, по какой маске
+                    # считалась ось: с черенком или без.
                     sym_res["without_petiole"] = active_mask is not leaf_mask
                     st.session_state.symmetry[(fname, idx)] = sym_res
                     st.session_state.sym_page[(fname, idx)] = 0
@@ -411,19 +415,18 @@ for tab, fname in zip(tabs, names):
 
             st.markdown("")
 
-            # 4. Профиль вращения — считается по той маске, что показана.
+            # Профиль вращения считается по той маске, что показана.
             want_profile = st.button(
                 "📈 Профиль вращения", key=f"prof_{fname}_{idx}",
-                width="stretch",
-                disabled=no_mask, help=need_seg)
+                width="stretch")
 
-        # ── В центре: выбранный лист в нужном виде ──────────────────────
-        # Показ зависит от переключателей:
-        #   симметрия     — изображения оси симметрии со стрелками
-        #                   переключения; важнее остальных переключателей;
-        #   бинарный вид  — маска вместо цветного изображения;
-        #   без черенка   — вместо полной маски берётся пластина, а на
-        #                   цветном изображении черешок стирается по ней.
+        # В центре: выбранный лист в нужном виде. Показ зависит
+        # от переключателей:
+        #   симметрия    — изображения оси симметрии со стрелками
+        #                  переключения; важнее остальных переключателей;
+        #   бинарный вид — маска вместо цветного изображения;
+        #   без черенка  — вместо полной маски берётся пластина, а на
+        #                  цветном изображении черешок стирается по ней.
         with col_leaf:
             if show_symmetry and symmetry_ready:
                 page = st.session_state.sym_page.get((fname, idx), 0)
@@ -432,11 +435,11 @@ for tab, fname in zip(tabs, names):
                     mask_note = "без черенка"
                 else:
                     mask_note = "с черенком"
-                box_h, box_w = leaf["crop"].shape[:2]
-                st.image(rgb(fit_to_box(sym_res[view_key], box_h, box_w)),
-                         caption=f"{view_title} · {page + 1}/{len(SYMMETRY_VIEWS)}"
-                                 f" · {mask_note}",
-                         width="stretch")
+                show_leaf_image(
+                    fit_to_box(sym_res[view_key], LEAF_VIEW_SIZE, LEAF_VIEW_SIZE),
+                    caption=f"{view_title} · {page + 1}/{len(SYMMETRY_VIEWS)}"
+                            f" · {mask_note}",
+                )
 
                 prev_col, info_col, next_col = st.columns([1, 3, 1])
                 with prev_col:
@@ -454,24 +457,24 @@ for tab, fname in zip(tabs, names):
                               width="stretch",
                               on_click=shift_sym_page,
                               args=((fname, idx), 1))
-            elif show_binary and active_mask is not None:
-                st.image(active_mask,
-                         caption=leaf_name(fname, idx) + " · маска",
-                         width="stretch", clamp=True)
+            elif show_binary:
+                # У маски фон чёрный, поэтому и поля чёрные.
+                show_leaf_image(
+                    fit_to_box(active_mask, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE,
+                               background=(0, 0, 0)),
+                    caption=leaf_name(fname, idx) + " · маска",
+                )
             else:
                 img = leaf["crop"]
                 if hide_petiole and petiole_ready:
                     img = apply_mask_to_color(img, cut_res["blade"])
-                st.image(rgb(img), caption=leaf_name(fname, idx),
-                         width="stretch")
+                show_leaf_image(
+                    fit_to_box(img, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE),
+                    caption=leaf_name(fname, idx))
 
-            if seg_res is None:
-                st.caption("Лист не сегментирован — доступен только цветной вид.")
-
-        # ── Под колонками: профиль вращения ─────────────────────────────
-        # Кнопка ничего не кэширует: дескриптор считается быстро, а маска
-        # зависит от переключателей — проще пересчитать, чем следить.
-        if want_profile and active_mask is not None:
+        # Под колонками: профиль вращения. Результат не кэшируется:
+        # дескриптор считается быстро, а маска зависит от переключателей.
+        if want_profile:
             try:
                 import leaftools
                 desc = leaftools.describe_mask(active_mask)

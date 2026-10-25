@@ -213,6 +213,7 @@ def segment(image_bgr, oc_svm):
             "crop": crop,
             "mask": crop_mask,
             "bbox": (x0, y0, x1 - x0, y1 - y0),
+            "contour": contour,
             "area": float(area),
             "perimeter": float(perimeter),
             "form_factor": float(form_factor),
