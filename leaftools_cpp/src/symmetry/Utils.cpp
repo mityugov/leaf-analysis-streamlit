@@ -20,9 +20,9 @@ bool isTwoLinesIntersection(cv::Point2f l1, cv::Point2f l2, cv::Point2f l3, cv::
 }
 
 
-//TODO: переделать данный метод: Алгоритм должен работать с вещественными числами.
-// Метод возвращает список направлений из center, формирующих окружность.
-// Основа DDA-алгоритма.
+//TODO: РїРµСЂРµРґРµР»Р°С‚СЊ РґР°РЅРЅС‹Р№ РјРµС‚РѕРґ: РђР»РіРѕСЂРёС‚Рј РґРѕР»Р¶РµРЅ СЂР°Р±РѕС‚Р°С‚СЊ СЃ РІРµС‰РµСЃС‚РІРµРЅРЅС‹РјРё С‡РёСЃР»Р°РјРё.
+// РњРµС‚РѕРґ РІРѕР·РІСЂР°С‰Р°РµС‚ СЃРїРёСЃРѕРє РЅР°РїСЂР°РІР»РµРЅРёР№ РёР· center, С„РѕСЂРјРёСЂСѓСЋС‰РёС… РѕРєСЂСѓР¶РЅРѕСЃС‚СЊ.
+// РћСЃРЅРѕРІР° DDA-Р°Р»РіРѕСЂРёС‚РјР°.
 std::vector<cv::Point2f> getCircleDirections(double radius) {
 	std::vector<cv::Point2f> result;
 	double x = 0;
@@ -69,7 +69,7 @@ std::vector<cv::Point2f> getCorrectCircleDirections(
 }
 
 cv::Point2f ddaBase(cv::Point2f center, const cv::Mat& img, cv::Point2f direction) {
-	// TODO: оптимизировать round (это очень тормозит программу). 
+	// TODO: РѕРїС‚РёРјРёР·РёСЂРѕРІР°С‚СЊ round (СЌС‚Рѕ РѕС‡РµРЅСЊ С‚РѕСЂРјРѕР·РёС‚ РїСЂРѕРіСЂР°РјРјСѓ).
 	float dX = direction.x;
 	float dY = direction.y;
 	float L = abs(dY) >= abs(dX) ? abs(dY) : abs(dX);

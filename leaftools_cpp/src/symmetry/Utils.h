@@ -74,9 +74,9 @@ public:
 bool isTwoLinesIntersection(cv::Point2f l1, cv::Point2f l2, cv::Point2f l3, cv::Point2f l4);
 
 
-//TODO: переделать данный метод: Алгоритм должен работать с вещественными числами.
-// Метод возвращает список направлений из center, формирующих окружность.
-// Основа DDA-алгоритма.
+//TODO: РїРµСЂРµРґРµР»Р°С‚СЊ РґР°РЅРЅС‹Р№ РјРµС‚РѕРґ: РђР»РіРѕСЂРёС‚Рј РґРѕР»Р¶РµРЅ СЂР°Р±РѕС‚Р°С‚СЊ СЃ РІРµС‰РµСЃС‚РІРµРЅРЅС‹РјРё С‡РёСЃР»Р°РјРё.
+// РњРµС‚РѕРґ РІРѕР·РІСЂР°С‰Р°РµС‚ СЃРїРёСЃРѕРє РЅР°РїСЂР°РІР»РµРЅРёР№ РёР· center, С„РѕСЂРјРёСЂСѓСЋС‰РёС… РѕРєСЂСѓР¶РЅРѕСЃС‚СЊ.
+// РћСЃРЅРѕРІР° DDA-Р°Р»РіРѕСЂРёС‚РјР°.
 std::vector<cv::Point2f> getCircleDirections(double radius);
 
 std::vector<cv::Point2f> getCorrectCircleDirections(
@@ -105,7 +105,7 @@ class ContourIndexer {
 private:
 	cv::Mat imgWithContour;
 	std::map<cv::Point, size_t, PointComparator> mapPointToIdx;
-	std::vector<cv::Point> contour; 
+	std::vector<cv::Point> contour;
 
 public:
 	ContourIndexer(const cv::Mat& img, const std::vector<cv::Point>& contour) : contour(contour) {
@@ -123,7 +123,7 @@ public:
 	}
 
 	cv::Point get(int index) {
-		return contour[index]; 
+		return contour[index];
 	}
 
 	int findContourPoint(int x, int y) const {
@@ -144,7 +144,7 @@ public:
 	}
 };
 
-// Метод пускает лучи перпендикулярно направлению direction из center и возвращает индексы отрезков по данным лучам. 
+// РњРµС‚РѕРґ РїСѓСЃРєР°РµС‚ Р»СѓС‡Рё РїРµСЂРїРµРЅРґРёРєСѓР»СЏСЂРЅРѕ РЅР°РїСЂР°РІР»РµРЅРёСЋ direction РёР· center Рё РІРѕР·РІСЂР°С‰Р°РµС‚ РёРЅРґРµРєСЃС‹ РѕС‚СЂРµР·РєРѕРІ РїРѕ РґР°РЅРЅС‹Рј Р»СѓС‡Р°Рј.
 std::pair<int, int> getIndexesByDirection(
 	cv::Point2f direction,
 	cv::Point2f center,

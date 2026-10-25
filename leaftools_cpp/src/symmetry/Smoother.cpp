@@ -35,53 +35,53 @@ bool iterationProcess(
 	cv::Point2f newPoint;
 	
 	double localJaccard;
-	//TODO: нужно сделать взвешенный localJaccard на cos (между либо предыдущей и следующей	точками, либо текущим направлением и следующим направлением)
+	//TODO: РЅСѓР¶РЅРѕ СЃРґРµР»Р°С‚СЊ РІР·РІРµС€РµРЅРЅС‹Р№ localJaccard РЅР° cos (РјРµР¶РґСѓ Р»РёР±Рѕ РїСЂРµРґС‹РґСѓС‰РµР№ Рё СЃР»РµРґСѓСЋС‰РµР№	С‚РѕС‡РєР°РјРё, Р»РёР±Рѕ С‚РµРєСѓС‰РёРј РЅР°РїСЂР°РІР»РµРЅРёРµРј Рё СЃР»РµРґСѓСЋС‰РёРј РЅР°РїСЂР°РІР»РµРЅРёРµРј)
 
 	std::map<double, Atom, std::greater<double>> directionAtoms;
 	for (auto direction : getCorrectCircleDirections(length, maxAngle, prevDirection)) {
-		newPoint = direction + start; 
+		newPoint = direction + start;
 		if (!isPointInside(newPoint, processor.img)) {
-			continue; 
+			continue;
 		}
 
-		// Данным ограничением не даем делать резкие заломы оси криволинейной симметрии.
+		// Р”Р°РЅРЅС‹Рј РѕРіСЂР°РЅРёС‡РµРЅРёРµРј РЅРµ РґР°РµРј РґРµР»Р°С‚СЊ СЂРµР·РєРёРµ Р·Р°Р»РѕРјС‹ РѕСЃРё РєСЂРёРІРѕР»РёРЅРµР№РЅРѕР№ СЃРёРјРјРµС‚СЂРёРё.
 		double cos = cos_about_two_vectors(direction, directionToEnd);
 		if (abs(cos) < limitCos) {
 			continue;
 		}
 
-		// Ограничение, чтобы не делать перескоки через фон. 
+		// РћРіСЂР°РЅРёС‡РµРЅРёРµ, С‡С‚РѕР±С‹ РЅРµ РґРµР»Р°С‚СЊ РїРµСЂРµСЃРєРѕРєРё С‡РµСЂРµР· С„РѕРЅ.
 		if (distanceFromPointByDirection(start, direction, processor.img) < length) {
-			continue; 
+			continue;
 		}
 
-		// "зрительный" контакт с конечной точкой должен быть всегда. Если его нет, значит, ушли куда-то не туда.
+		// "Р·СЂРёС‚РµР»СЊРЅС‹Р№" РєРѕРЅС‚Р°РєС‚ СЃ РєРѕРЅРµС‡РЅРѕР№ С‚РѕС‡РєРѕР№ РґРѕР»Р¶РµРЅ Р±С‹С‚СЊ РІСЃРµРіРґР°. Р•СЃР»Рё РµРіРѕ РЅРµС‚, Р·РЅР°С‡РёС‚, СѓС€Р»Рё РєСѓРґР°-С‚Рѕ РЅРµ С‚СѓРґР°.
 		if (distanceFromPointByDirection(newPoint, (end - newPoint), processor.img) < euclid_dst(newPoint, end)) {
 			continue;
 		}
 
-		// Нельзя, чтобы полученный отрезок разделения пересекался с другой точкой.
+		// РќРµР»СЊР·СЏ, С‡С‚РѕР±С‹ РїРѕР»СѓС‡РµРЅРЅС‹Р№ РѕС‚СЂРµР·РѕРє СЂР°Р·РґРµР»РµРЅРёСЏ РїРµСЂРµСЃРµРєР°Р»СЃСЏ СЃ РґСЂСѓРіРѕР№ С‚РѕС‡РєРѕР№.
 		std::pair<int, int> currentLineIndexes = processor.getIndexesFor(newPoint, direction);
 		if (processor.areBorderedLinesIntersectedWith(currentLineIndexes)) {
 			continue;
 		}
-		
+
 		std::tie(std::ignore, std::ignore, localJaccard) = dda_line(newPoint, processor.img, direction);
 		if (localJaccard < lowJaccard) {
-			continue; 
+			continue;
 		}
 
 		Atom atom;
-		atom.localJaccard = localJaccard; 
-		atom.directionToPoint = direction; 
+		atom.localJaccard = localJaccard;
+		atom.directionToPoint = direction;
 		atom.point = newPoint;
-		atom.contourIndexes = currentLineIndexes; 
-		directionAtoms.insert({ localJaccard, atom }); 
+		atom.contourIndexes = currentLineIndexes;
+		directionAtoms.insert({ localJaccard, atom });
 	}
 
 	for (auto& kv : directionAtoms) {
-		Atom& atom = kv.second; 
-		processor.addIteration(atom); 
+		Atom& atom = kv.second;
+		processor.addIteration(atom);
 		if (iterationProcess(atom.point, end, length, processor)) {
 			return true;
 		}
@@ -91,15 +91,15 @@ bool iterationProcess(
 }
 
 
-// Есть базовая процедура обхода, которая работает очень медленно. 
-// Она перебирает все возможные точки с целью поиска наилучшего фрагмента криволинейной оси из точки А в B.
-// Алгоритм - brutforce, то есть, работает по принципу полного перебора. 
-// Нужно добавить ограничения по выбору точек для движения. 
-// 
-// 1. Количество углов поворота зависит от максимального расстояния от start по направлению движения. 
-//    Это позволяет уменьшить на каждой итерации количество углов для просмотра. 
-// 
-// Нужно придумать какое-то интеллектуальное решение, которое будет отсекать плохие направления на каждой итерации.
+// Р•СЃС‚СЊ Р±Р°Р·РѕРІР°СЏ РїСЂРѕС†РµРґСѓСЂР° РѕР±С…РѕРґР°, РєРѕС‚РѕСЂР°СЏ СЂР°Р±РѕС‚Р°РµС‚ РѕС‡РµРЅСЊ РјРµРґР»РµРЅРЅРѕ.
+// РћРЅР° РїРµСЂРµР±РёСЂР°РµС‚ РІСЃРµ РІРѕР·РјРѕР¶РЅС‹Рµ С‚РѕС‡РєРё СЃ С†РµР»СЊСЋ РїРѕРёСЃРєР° РЅР°РёР»СѓС‡С€РµРіРѕ С„СЂР°РіРјРµРЅС‚Р° РєСЂРёРІРѕР»РёРЅРµР№РЅРѕР№ РѕСЃРё РёР· С‚РѕС‡РєРё Рђ РІ B.
+// РђР»РіРѕСЂРёС‚Рј - brutforce, С‚Рѕ РµСЃС‚СЊ, СЂР°Р±РѕС‚Р°РµС‚ РїРѕ РїСЂРёРЅС†РёРїСѓ РїРѕР»РЅРѕРіРѕ РїРµСЂРµР±РѕСЂР°.
+// РќСѓР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РѕРіСЂР°РЅРёС‡РµРЅРёСЏ РїРѕ РІС‹Р±РѕСЂСѓ С‚РѕС‡РµРє РґР»СЏ РґРІРёР¶РµРЅРёСЏ.
+//
+// 1. РљРѕР»РёС‡РµСЃС‚РІРѕ СѓРіР»РѕРІ РїРѕРІРѕСЂРѕС‚Р° Р·Р°РІРёСЃРёС‚ РѕС‚ РјР°РєСЃРёРјР°Р»СЊРЅРѕРіРѕ СЂР°СЃСЃС‚РѕСЏРЅРёСЏ РѕС‚ start РїРѕ РЅР°РїСЂР°РІР»РµРЅРёСЋ РґРІРёР¶РµРЅРёСЏ.
+//    Р­С‚Рѕ РїРѕР·РІРѕР»СЏРµС‚ СѓРјРµРЅСЊС€РёС‚СЊ РЅР° РєР°Р¶РґРѕР№ РёС‚РµСЂР°С†РёРё РєРѕР»РёС‡РµСЃС‚РІРѕ СѓРіР»РѕРІ РґР»СЏ РїСЂРѕСЃРјРѕС‚СЂР°.
+//
+// РќСѓР¶РЅРѕ РїСЂРёРґСѓРјР°С‚СЊ РєР°РєРѕРµ-С‚Рѕ РёРЅС‚РµР»Р»РµРєС‚СѓР°Р»СЊРЅРѕРµ СЂРµС€РµРЅРёРµ, РєРѕС‚РѕСЂРѕРµ Р±СѓРґРµС‚ РѕС‚СЃРµРєР°С‚СЊ РїР»РѕС…РёРµ РЅР°РїСЂР°РІР»РµРЅРёСЏ РЅР° РєР°Р¶РґРѕР№ РёС‚РµСЂР°С†РёРё.
 
 
 

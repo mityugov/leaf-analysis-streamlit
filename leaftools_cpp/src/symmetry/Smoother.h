@@ -142,11 +142,10 @@ public:
 	}
 
 
-	// Возвращает список дополнительных точек между start и end.
+	// Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃРїРёСЃРѕРє РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹С… С‚РѕС‡РµРє РјРµР¶РґСѓ start Рё end.
 	std::vector<Atom> smooth(double length, std::pair<int, int> endLine,
 		std::pair<int, int> startLine,
 		cv::Point2f start,
 		cv::Point2f end,
 		cv::Point2f startDirection);
 };
-

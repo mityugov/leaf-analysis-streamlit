@@ -12,16 +12,16 @@ protected:
 
 public:
 	RectifyContourContainer(std::vector<cv::Point> contour);
-	// Индекс повернутой точки или -1, если не удалось распрямить.
+	// РРЅРґРµРєСЃ РїРѕРІРµСЂРЅСѓС‚РѕР№ С‚РѕС‡РєРё РёР»Рё -1, РµСЃР»Рё РЅРµ СѓРґР°Р»РѕСЃСЊ СЂР°СЃРїСЂСЏРјРёС‚СЊ.
 	int rectifyPoint(cv::Point point, double angle, cv::Point oldCenter, cv::Point newCenter);
-	// Возвращает повернутую точку по индексу, полученному из метода rectifyPoint
+	// Р’РѕР·РІСЂР°С‰Р°РµС‚ РїРѕРІРµСЂРЅСѓС‚СѓСЋ С‚РѕС‡РєСѓ РїРѕ РёРЅРґРµРєСЃСѓ, РїРѕР»СѓС‡РµРЅРЅРѕРјСѓ РёР· РјРµС‚РѕРґР° rectifyPoint
 	cv::Point getRectified(int index) {
-		return rectifiedContour[index]; 
+		return rectifiedContour[index];
 	}
 
-	// Дополняет пробелы в rectifiedContour между точками,
-	// так как при процессе распрямления могут быть большие пробелы.
-	// Дополнительно обновляет смещение всех точек. 
+	// Р”РѕРїРѕР»РЅСЏРµС‚ РїСЂРѕР±РµР»С‹ РІ rectifiedContour РјРµР¶РґСѓ С‚РѕС‡РєР°РјРё,
+	// С‚Р°Рє РєР°Рє РїСЂРё РїСЂРѕС†РµСЃСЃРµ СЂР°СЃРїСЂСЏРјР»РµРЅРёСЏ РјРѕРіСѓС‚ Р±С‹С‚СЊ Р±РѕР»СЊС€РёРµ РїСЂРѕР±РµР»С‹.
+	// Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕ РѕР±РЅРѕРІР»СЏРµС‚ СЃРјРµС‰РµРЅРёРµ РІСЃРµС… С‚РѕС‡РµРє.
 	void resize(int& min_y, int& min_x);
 
 	void draw(cv::Mat& img, cv::Scalar color);
@@ -34,14 +34,14 @@ public:
 	}
 
 
-	// Размер исходного контура
+	// Р Р°Р·РјРµСЂ РёСЃС…РѕРґРЅРѕРіРѕ РєРѕРЅС‚СѓСЂР°
 	int size() {
-		return contour.size(); 
+		return contour.size();
 	}
 
-	// Возвращает элемент исходного контура по номеру index
+	// Р’РѕР·РІСЂР°С‰Р°РµС‚ СЌР»РµРјРµРЅС‚ РёСЃС…РѕРґРЅРѕРіРѕ РєРѕРЅС‚СѓСЂР° РїРѕ РЅРѕРјРµСЂСѓ index
 	cv::Point operator[](size_t index) {
-		return contour[index]; 
+		return contour[index];
 	}
 };
 
@@ -52,11 +52,11 @@ private:
 	std::vector<cv::Vec4i> hierarchy;
 	std::vector<RectifyContourContainer*> contours;
 
-	// Соответствие точки на изображении к контуру
+	// РЎРѕРѕС‚РІРµС‚СЃС‚РІРёРµ С‚РѕС‡РєРё РЅР° РёР·РѕР±СЂР°Р¶РµРЅРёРё Рє РєРѕРЅС‚СѓСЂСѓ
 	std::map<cv::Point, std::vector<RectifyContourContainer*>, PointComparator> pointToContour;
-	std::vector<cv::Point> externalContour; 
+	std::vector<cv::Point> externalContour;
 
-	cv::Mat imgWithContours; 
+	cv::Mat imgWithContours;
 
 	int min_x = 0;
 	int max_x = 0;
@@ -64,17 +64,17 @@ private:
 	int max_y = 0;
 
 
-	void rectifyPoint(RectifyContourContainer* contour, cv::Point point, double angle, cv::Point rotateCenter, cv::Point newCenter); 
+	void rectifyPoint(RectifyContourContainer* contour, cv::Point point, double angle, cv::Point rotateCenter, cv::Point newCenter);
 public:
-	~MultiContourImageRectifier(); 
+	~MultiContourImageRectifier();
 	MultiContourImageRectifier(const cv::Mat& img);
 	void rectifySector(std::pair<int, int> currentLine, std::pair<int, int> previousLine, double angle, cv::Point rotateCenter, cv::Point newCenter);
 	void rectifyTerminalSector(std::pair<int, int> terminalLine, std::pair<int, int> previousLine, double angle, cv::Point rotateCenter, cv::Point newCenter);
 	void rectifyOther(double angle, cv::Point rotateCenter, cv::Point newCenter);
 
-	cv::Mat drawRectified(); 
+	cv::Mat drawRectified();
 
-	// Возвращает смещение координат на сгенерированном изображении. 
+	// Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃРјРµС‰РµРЅРёРµ РєРѕРѕСЂРґРёРЅР°С‚ РЅР° СЃРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅРѕРј РёР·РѕР±СЂР°Р¶РµРЅРёРё.
 	cv::Point getImageOffset() {
 		return cv::Point(min_x, min_y); 
 	}

@@ -22,7 +22,7 @@ std::vector<cv::Point> findPointsFromSector(
 		}
 	}
 	else {
-		//m1 или m2 в пределах [low, high], тогда нужно от [0, low] и от [high, size]
+		//m1 РёР»Рё m2 РІ РїСЂРµРґРµР»Р°С… [low, high], С‚РѕРіРґР° РЅСѓР¶РЅРѕ РѕС‚ [0, low] Рё РѕС‚ [high, size]
 		for (size_t i = 0; i < contour.size(); i++) {
 			if (i <= low || i >= high) {
 				result.push_back(contour[i]);
@@ -45,7 +45,7 @@ std::vector<cv::Point> getPointsBeetwen(std::pair<int, int> currentLine,
 MultiContourImageRectifier::MultiContourImageRectifier(const cv::Mat& img) {
 	std::vector<std::vector<cv::Point>> allContours;
 	cv::findContours(img, allContours, hierarchy, cv::RETR_TREE, cv::CHAIN_APPROX_NONE, cv::Point(0, 0));
-	imgWithContours = cv::Mat::zeros(img.size(), CV_8UC1); 
+	imgWithContours = cv::Mat::zeros(img.size(), CV_8UC1);
 
 	externalContour = *std::max_element(allContours.begin(), allContours.end(), []
 	(const std::vector<cv::Point>& first, const std::vector<cv::Point>& second) { return first.size() < second.size(); });
@@ -55,7 +55,7 @@ MultiContourImageRectifier::MultiContourImageRectifier(const cv::Mat& img) {
 		RectifyContourContainer* container = new RectifyContourContainer(contour);
 		contours.push_back(container);
 		for (auto p : contour) {
-			imgWithContours.at<uchar>(p) = 255; 
+			imgWithContours.at<uchar>(p) = 255;
 			if (pointToContour.count(p) == 0) {
 				pointToContour.insert({ p, {container} });
 			}
@@ -68,20 +68,20 @@ MultiContourImageRectifier::MultiContourImageRectifier(const cv::Mat& img) {
 
 MultiContourImageRectifier::~MultiContourImageRectifier() {
 	for (size_t i = 0; i < contours.size(); i++) {
-		delete contours[i]; 
+		delete contours[i];
 	}
 }
 
 inline cv::Point rotatePoint(cv::Point point, double angle) {
-	cv::Point2f direction = point; 
-	double cosinus = cos(angle); 
-	double sinus = sin(angle); 
+	cv::Point2f direction = point;
+	double cosinus = cos(angle);
+	double sinus = sin(angle);
 	return cv::Point(round(direction.x * cosinus - direction.y * sinus),
 					 round(direction.y * cosinus + direction.x * sinus));
 }
 
 
-//TODO: подумать, как ускорить. Очень тяжелый метод
+//TODO: РїРѕРґСѓРјР°С‚СЊ, РєР°Рє СѓСЃРєРѕСЂРёС‚СЊ. РћС‡РµРЅСЊ С‚СЏР¶РµР»С‹Р№ РјРµС‚РѕРґ
 cv::Mat getMask(
 	const std::vector<cv::Point>& detectedPoints,
 	const std::vector<SimpleLine>& borderedLines,
@@ -89,10 +89,10 @@ cv::Mat getMask(
 ) {
 	cv::Mat mask = cv::Mat::zeros(maskSize, CV_8UC1);
 	std::for_each(detectedPoints.begin(), detectedPoints.end(), [&mask](const cv::Point& p) { mask.at<uchar>(p) = 255; });
-	std::for_each(borderedLines.begin(), borderedLines.end(), 
+	std::for_each(borderedLines.begin(), borderedLines.end(),
 		[&mask](const SimpleLine& line)
-		{ 
-			cv::line(mask, line.first, line.second, 255); 
+		{
+			cv::line(mask, line.first, line.second, 255);
 		}
 	);
 	std::vector<cv::Vec4i> hierarchy;
@@ -110,24 +110,24 @@ void MultiContourImageRectifier::rectifySector(
 	std::pair<int, int> currentLine,
 	std::pair<int, int> previousLine,
 	double angle, cv::Point rotateCenter, cv::Point newCenter) {
-	auto pointsFromSectors = getPointsBeetwen(currentLine, previousLine, externalContour); 
+	auto pointsFromSectors = getPointsBeetwen(currentLine, previousLine, externalContour);
 	if (pointsFromSectors.empty()) {
-		return; 
+		return;
 	}
 
 
-	std::vector<SimpleLine> lines; 
-	lines.push_back({ externalContour[currentLine.first], externalContour[currentLine.second] }); 
+	std::vector<SimpleLine> lines;
+	lines.push_back({ externalContour[currentLine.first], externalContour[currentLine.second] });
     lines.push_back({ externalContour[previousLine.first], externalContour[previousLine.second] });
 	cv::Mat mask;
-	cv::bitwise_and(getMask(pointsFromSectors, lines, imgWithContours.size()), imgWithContours, mask); 
+	cv::bitwise_and(getMask(pointsFromSectors, lines, imgWithContours.size()), imgWithContours, mask);
 
 	std::vector<cv::Point> pointsFromMask;
-	cv::findNonZero(mask, pointsFromMask); 
+	cv::findNonZero(mask, pointsFromMask);
 
 	for (const cv::Point& point : pointsFromMask) {
 		if (pointToContour.count(point) == 0) {
-			continue; 
+			continue;
 		}
 		for (auto contour : pointToContour.at(point)) {
 			rectifyPoint(contour, point, angle, rotateCenter, newCenter);
@@ -137,7 +137,7 @@ void MultiContourImageRectifier::rectifySector(
 
 
 void MultiContourImageRectifier::rectifyTerminalSector(
-	std::pair<int, int> terminalLine, 
+	std::pair<int, int> terminalLine,
 	std::pair<int, int> previousLine,
 	double angle, cv::Point rotateCenter, cv::Point newCenter) {
 
@@ -167,7 +167,7 @@ void MultiContourImageRectifier::rectifyTerminalSector(
 void MultiContourImageRectifier::rectifyOther(double angle, cv::Point rotateCenter, cv::Point newCenter) {
 	for (auto contour : contours) {
 		for (size_t i = 0; i < contour->size(); i++) {
-			rectifyPoint(contour, (*contour)[i], angle, rotateCenter, newCenter); 
+			rectifyPoint(contour, (*contour)[i], angle, rotateCenter, newCenter);
 		}
 	}
 }
@@ -187,16 +187,16 @@ void MultiContourImageRectifier::rectifyPoint(RectifyContourContainer* contour, 
 
 void traverseContours(const std::vector<RectifyContourContainer*>& contours, const std::vector<cv::Vec4i>& hierarchy, int idx, int level,
 	                  cv::Mat& img) {
-	if (idx == -1) return; // нет контура
+	if (idx == -1) return; // РЅРµС‚ РєРѕРЅС‚СѓСЂР°
 
 	RectifyContourContainer* container = contours[idx];
 	container->draw(img, (level % 2 == 0) ? cv::Scalar(255, 255, 255) : cv::Scalar(0, 0, 0));
 
 
-	// Рекурсивно обходим дочерние контуры (первый дочерний элемент)
+	// Р РµРєСѓСЂСЃРёРІРЅРѕ РѕР±С…РѕРґРёРј РґРѕС‡РµСЂРЅРёРµ РєРѕРЅС‚СѓСЂС‹ (РїРµСЂРІС‹Р№ РґРѕС‡РµСЂРЅРёР№ СЌР»РµРјРµРЅС‚)
 	traverseContours(contours, hierarchy, hierarchy[idx][2], level + 1, img);
 
-	// Обходим следующий контур на том же уровне
+	// РћР±С…РѕРґРёРј СЃР»РµРґСѓСЋС‰РёР№ РєРѕРЅС‚СѓСЂ РЅР° С‚РѕРј Р¶Рµ СѓСЂРѕРІРЅРµ
 	traverseContours(contours, hierarchy, hierarchy[idx][0], level, img);
 }
 
@@ -220,7 +220,7 @@ cv::Mat MultiContourImageRectifier::drawRectified() {
 		}
 	}
 
-	return result; 
+	return result;
 }
 
 
@@ -231,7 +231,7 @@ RectifyContourContainer::RectifyContourContainer(std::vector<cv::Point> contour)
 }
 
 
-// Возвращает набор точек от p1, до p2 (не включая p1, p2). 
+// Р’РѕР·РІСЂР°С‰Р°РµС‚ РЅР°Р±РѕСЂ С‚РѕС‡РµРє РѕС‚ p1, РґРѕ p2 (РЅРµ РІРєР»СЋС‡Р°СЏ p1, p2).
 std::vector<cv::Point> detectPoints(cv::Point p1, cv::Point p2) {
 	cv::Point2f direction = p2 - p1; 
 	float dX = direction.x;

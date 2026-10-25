@@ -132,7 +132,7 @@ public:
 	GreedySearch() {};
 	~GreedySearch() {};
 private:
-	// Возвращает направление для смещения и индексы внешнего контура для разреза фигуры. 
+	// Р’РѕР·РІСЂР°С‰Р°РµС‚ РЅР°РїСЂР°РІР»РµРЅРёРµ РґР»СЏ СЃРјРµС‰РµРЅРёСЏ Рё РёРЅРґРµРєСЃС‹ РІРЅРµС€РЅРµРіРѕ РєРѕРЅС‚СѓСЂР° РґР»СЏ СЂР°Р·СЂРµР·Р° С„РёРіСѓСЂС‹.
 	std::tuple<cv::Point2f, std::pair<int, int>>  findNextDirection(
 		cv::Point2f center,
 		cv::Point2f last_condition,
@@ -145,8 +145,3 @@ private:
 		const std::vector<std::pair<cv::Point2f, cv::Point2f>> previousLines);
 	std::vector<cv::Point2f> algorithm(Data& dt, cv::Point2f start_condition);
 };
-
-
-
-
-
