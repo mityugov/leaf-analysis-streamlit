@@ -17,6 +17,20 @@ st.set_page_config(page_title="Анализ листьев", page_icon="🍃", l
 # Папка с моделью SVM для поиска черешка (лежит рядом с app.py).
 MODELS_DIR = Path(__file__).parent / "models"
 
+# Папка со сканами-примерами. Они показываются на боковой панели,
+# и их можно открыть без загрузки файла.
+EXAMPLES_DIR = Path(__file__).parent / "examples"
+
+# Форматы сканов: для загрузки файлов и для примеров.
+SCAN_TYPES = ["jpg", "jpeg", "png", "bmp", "tif", "tiff"]
+
+# Ширина миниатюры примера на боковой панели, пикселей.
+EXAMPLE_THUMB_WIDTH = 400
+
+# Список публикаций в формате Markdown. Новые статьи добавляются в этот
+# файл, код менять не нужно.
+PUBLICATIONS_FILE = Path(__file__).parent / "assets" / "publications.md"
+
 # Сторона квадрата, в который вписывается изображение листа в центральной
 # колонке, пикселей. На странице квадрат растягивается на ширину колонки,
 # поэтому высота изображения не зависит от формы листа.
@@ -67,6 +81,29 @@ def segment_scan_image(image_bytes: bytes):
     и контур каждого листа в координатах скана.
     """
     return segmentation.segment(load_scan(image_bytes), get_svm())
+
+
+@st.cache_data(show_spinner=False)
+def read_example(file_name: str) -> bytes:
+    """Читает файл примера из папки examples."""
+    return (EXAMPLES_DIR / file_name).read_bytes()
+
+
+@st.cache_data(show_spinner=False)
+def example_thumbnail(file_name: str):
+    """
+    Уменьшенная копия скана примера для карточки на боковой панели.
+
+    Возвращает None, если файл не является изображением.
+    """
+    image = load_scan(read_example(file_name))
+    if image is None:
+        return None
+
+    h, w = image.shape[:2]
+    new_h = max(int(round(h * EXAMPLE_THUMB_WIDTH / w)), 1)
+    return cv2.resize(image, (EXAMPLE_THUMB_WIDTH, new_h),
+                      interpolation=cv2.INTER_AREA)
 
 
 # Вспомогательные функции.
@@ -186,14 +223,21 @@ def fit_to_box(image, box_h, box_w, background=(255, 255, 255)):
     return canvas
 
 
+def show_publications():
+    """Выводит список публикаций из файла PUBLICATIONS_FILE."""
+    if not PUBLICATIONS_FILE.is_file():
+        return
+    st.markdown(PUBLICATIONS_FILE.read_text(encoding="utf-8"))
+
+
 def show_leaf_image(image_bgr, caption: str):
     """
     Выводит изображение BGR uint8 с подписью.
 
-    Изображение вставляется в страницу как PNG в data-URL. В отличие от
-    st.image, браузеру не нужен отдельный запрос к серверу Streamlit:
-    такой запрос мог прийти уже после того, как Streamlit удалил файл
-    прошлого прогона, и тогда вместо листа показывалась «битая» картинка.
+    Изображение передаётся в st.image как PNG в data-URL. Массив NumPy
+    Streamlit сохранил бы во временный файл на сервере, а браузер мог
+    запросить этот файл уже после того, как Streamlit удалил его
+    при следующем прогоне. Тогда вместо листа показывалась «битая» картинка.
     """
     ok, buffer = cv2.imencode(".png", image_bgr)
     if not ok:
@@ -201,18 +245,7 @@ def show_leaf_image(image_bgr, caption: str):
         return
 
     b64 = base64.b64encode(buffer.tobytes()).decode("ascii")
-    # Подпись экранируется: символы < и " в имени файла не ломают HTML.
-    safe_caption = escape(caption)
-    st.markdown(
-        '<figure style="margin:0;width:100%;">'
-        f'<img src="data:image/png;base64,{b64}" alt="{safe_caption}" '
-        'style="display:block;width:100%;height:auto;object-fit:contain;'
-        'border-radius:8px;"/>'
-        f'<figcaption style="text-align:center;opacity:.75;'
-        f'font-size:.9rem;margin-top:6px;">{safe_caption}</figcaption>'
-        '</figure>',
-        unsafe_allow_html=True,
-    )
+    st.image("data:image/png;base64," + b64, caption=caption, width="stretch")
 
 
 # Загрузка файлов.
@@ -221,12 +254,61 @@ st.title("🍃 Анализ листьев")
 
 uploaded = st.file_uploader(
     "Загрузить сканированные изображения листьев",
-    type=["jpg", "jpeg", "png", "bmp", "tif", "tiff"],
+    type=SCAN_TYPES,
     accept_multiple_files=True,
 )
 
-if not uploaded:
-    st.info("Выберите изображение(я) скана.")
+# Публикации в свёрнутом блоке под загрузкой файлов. Блок стоит до проверки
+# на пустую страницу, поэтому виден и тогда, когда сканов ещё нет.
+with st.expander("Публикации по данной теме"):
+    show_publications()
+
+
+# Примеры на боковой панели. У каждого примера карточка: миниатюра,
+# имя файла и кнопка, которая добавляет скан во вкладки или убирает его.
+# Добавленные примеры хранятся в session_state.examples (список имён).
+if not isinstance(st.session_state.get("examples"), list):
+    st.session_state.examples = []
+
+
+def toggle_example(file_name):
+    """Добавляет пример во вкладки или убирает его оттуда."""
+    if file_name in st.session_state.examples:
+        st.session_state.examples.remove(file_name)
+    else:
+        st.session_state.examples.append(file_name)
+
+
+example_files = []
+if EXAMPLES_DIR.is_dir():
+    for path in sorted(EXAMPLES_DIR.iterdir()):
+        if path.suffix.lower().lstrip(".") in SCAN_TYPES:
+            example_files.append(path.name)
+
+if example_files:
+    with st.sidebar:
+        st.header("Примеры")
+        st.caption("Сканы, на которых можно попробовать приложение "
+                   "без загрузки своих файлов.")
+        for file_name in example_files:
+            with st.container(border=True):
+                thumb = example_thumbnail(file_name)
+                if thumb is not None:
+                    show_leaf_image(thumb, caption=file_name)
+
+                if file_name in st.session_state.examples:
+                    label = "✖ Убрать"
+                else:
+                    label = "Использовать"
+                st.button(label, key=f"example_{file_name}", width="stretch",
+                          on_click=toggle_example, args=(file_name,))
+
+# Пока нет ни одного скана, на странице только подсказка.
+if not uploaded and not st.session_state.examples:
+    if example_files:
+        st.info("Загрузите скан или выберите пример на боковой панели слева.")
+    else:
+        st.info("Выберите изображение(я) скана.")
     st.stop()
 
 # При загрузке скан только декодируется. Листья находит сегментация,
@@ -239,6 +321,16 @@ for f in uploaded:
     if image is not None:
         scans[f.name] = image
         scan_bytes[f.name] = data
+
+# Добавленные примеры открываются так же, как загруженные файлы.
+for file_name in st.session_state.examples:
+    if file_name not in example_files:
+        continue
+    data = read_example(file_name)
+    image = load_scan(data)
+    if image is not None:
+        scans[file_name] = image
+        scan_bytes[file_name] = data
 
 if not scans:
     st.error("Не удалось прочитать ни одного изображения.")
@@ -378,7 +470,7 @@ n_done = len(names) - len(not_segmented)
 
 top_l, top_r = st.columns([1, 3])
 with top_l:
-    if st.button("▶ Сегментировать всё", type="primary",
+    if st.button("▶ Сегментировать все сканы", type="primary",
                  width="stretch", disabled=not not_segmented):
         bar = st.progress(0.0, text="Сегментация…")
         for done, fname in enumerate(not_segmented):
@@ -444,7 +536,7 @@ for tab, fname in zip(tabs, names):
             # Результат кэшируется по содержимому файла, поэтому повторная
             # сегментация того же скана не нужна.
             if seg_res is None:
-                if st.button("▶ Сегментировать скан", key=f"seg_{fname}",
+                if st.button("▶ Сегментировать выбранный скан", key=f"seg_{fname}",
                              width="stretch", type="primary"):
                     with st.spinner("Сегментация…"):
                         segment_scan(fname)
