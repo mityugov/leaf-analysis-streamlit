@@ -209,53 +209,44 @@ void CurvilinearSymmetryBase::Draw(Data& dt, Curvilinear& line)
 	line.straightened_.setTo(cv::Scalar(255, 255, 255), line.rectified_image_ == 0);
 	cv::line(line.straightened_, line.line_of_rectified_.getFirstPoint(), line.line_of_rectified_.getSecondPoint(), cv::Scalar(0, 255, 255));
 
-	//TODO: вот тут надо переделать, так как сейчас не всё отраженное изображение попадает в "кадр".
-	cv::Mat img1;
-	cv::flip(line.rectified_image_, img1, 1);
+	// Лист и его отражение относительно оси. Цвета: чёрный — лист и отражение
+	// совпадают, синий — только лист, красный — только отражение.
+	// Ширина изображения выбирается так, чтобы ось была посередине:
+	// тогда отражение целиком попадает в кадр.
+	const cv::Mat& rectified = line.rectified_image_;
 	Line axis = line.line_of_rectified_;
-	int difference = line.rectified_image_.cols - 1 - 2 * axis.getFirstPoint().x;
-	line.reflected_ = cv::Mat(line.rectified_image_.size(), CV_8UC3, cv::Scalar(255, 255, 255));
-	line.reflected_.setTo(cv::Scalar(255, 0, 0), line.rectified_image_ != 0);
+	int axisX = static_cast<int>(axis.getFirstPoint().x);
+	int halfWidth = std::max(axisX, rectified.cols - 1 - axisX);
+	int newCols = 2 * halfWidth + 1;
+	int offsetX = halfWidth - axisX;
+	line.reflected_ = cv::Mat(rectified.rows, newCols, CV_8UC3, cv::Scalar(255, 255, 255));
 
-	for (int i = 0; i < line.rectified_image_.rows; i++)
+	for (int i = 0; i < rectified.rows; i++)
 	{
-		for (int j = 0; j < line.rectified_image_.cols; j++)
+		for (int j = 0; j < newCols; j++)
 		{
-			cv::Point offset_current = cv::Point(j - difference, i);
-			if (offset_current.x < 0 || offset_current.x >= line.rectified_image_.cols || img1.at<uchar>(i, j) == 0)
-				continue;
-			line.reflected_.at<cv::Vec3b>(offset_current) = line.rectified_image_.at<uchar>(offset_current) == 0 ? cv::Vec3b(0, 0, 255)
-																												 : cv::Vec3b(0, 0, 0);
+			// Столбец листа, который попадает в j, и столбец, который отражается в j.
+			int leafX = j - offsetX;
+			int mirrorX = 2 * axisX - leafX;
+
+			bool inLeaf = false;
+			if (leafX >= 0 && leafX < rectified.cols)
+				inLeaf = rectified.at<uchar>(i, leafX) != 0;
+
+			bool inMirror = false;
+			if (mirrorX >= 0 && mirrorX < rectified.cols)
+				inMirror = rectified.at<uchar>(i, mirrorX) != 0;
+
+			if (inLeaf && inMirror)
+				line.reflected_.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 0, 0);
+			else if (inLeaf)
+				line.reflected_.at<cv::Vec3b>(i, j) = cv::Vec3b(255, 0, 0);
+			else if (inMirror)
+				line.reflected_.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 0, 255);
 		}
 	}
-	cv::line(line.reflected_, axis.getFirstPoint(), axis.getSecondPoint(), cv::Scalar(0, 255, 255));
-
-
-	/*
-	//TODO: новый алгоритм получения reflected-изображения с использованием forEach на изображении.
-	int axisX = axis.getFirstPoint().x;
-	int newCols = 2 * std::max(axisX, line.rectified_image_.cols - axisX);
-	cv::Mat newReflected = cv::Mat(line.rectified_image_.rows, newCols, CV_8UC3, cv::Scalar(255, 255, 255));
-
-	int offsetX = newCols / 2 - std::min(axisX, line.rectified_image_.cols - axisX);
-	uchar b, r;
-	for (int i = 0; i < line.rectified_image_.rows; i++)
-	{
-		for (int j = 0; j < line.rectified_image_.cols; j++)
-		{
-			b = line.rectified_image_.at<uchar>(i, j);
-			r = img1.at<uchar>(i, j + offsetX);
-			if (b && r) {
-				newReflected.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 0, 0);
-			} else if (b) {
-				newReflected.at<cv::Vec3b>(i, j) = cv::Vec3b(255, 0, 0);
-			} else if (r) {
-				newReflected.at<cv::Vec3b>(i, j) = cv::Vec3b(0, 0, 255);
-			}
-		}
-	}
-	cv::imwrite("test.bmp", newReflected);
-	*/
+	cv::Point2f shift(static_cast<float>(offsetX), 0.f);
+	cv::line(line.reflected_, axis.getFirstPoint() + shift, axis.getSecondPoint() + shift, cv::Scalar(0, 255, 255));
 }
 
 

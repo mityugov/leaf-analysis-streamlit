@@ -56,6 +56,18 @@ py::dict find_symmetry(
     result["jaccard_straightened"] = best_axis.jaccard_index_with_straightened_shape_area_;
     result["jaccard_original"] = best_axis.jaccard_index_with_original_shape_area_;
     result["axis"] = matToNumpy(best_axis.curvilinear_axis_);
+
+    // Точки оси в координатах входной маски: алгоритм работает с маской,
+    // обрезанной по рамке листа, поэтому прибавляем сдвиг этой рамки.
+    const size_t point_count = best_axis.curvilinearAxisAtoms.size();
+    py::array_t<float> axis_points({point_count, static_cast<size_t>(2)});
+    auto points = axis_points.mutable_unchecked<2>();
+    for (size_t i = 0; i < point_count; i++) {
+        const cv::Point2f& atom = best_axis.curvilinearAxisAtoms[i];
+        points(i, 0) = atom.x + search_input.offset_.x;
+        points(i, 1) = atom.y + search_input.offset_.y;
+    }
+    result["axis_points"] = axis_points;
     result["straightened"] = matToNumpy(best_axis.straightened_);
     result["reflected"] = matToNumpy(best_axis.reflected_);
     return result;

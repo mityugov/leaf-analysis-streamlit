@@ -11,7 +11,8 @@
  *
  * @return dict: found, jaccard_straightened, jaccard_original; при found = true
  *         также axis, straightened, reflected — изображения BGR в координатах
- *         маски, обрезанной по рамке листа.
+ *         маски, обрезанной по рамке листа; axis_points — точки оси (N, 2)
+ *         float32 (x, y) в координатах входной маски.
  */
 py::dict find_symmetry(
     const MaskArray& leaf_mask,

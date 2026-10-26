@@ -22,7 +22,8 @@ MODELS_DIR = Path(__file__).parent / "models"
 # поэтому высота изображения не зависит от формы листа.
 LEAF_VIEW_SIZE = 800
 
-# Изображения, которые возвращает поиск оси симметрии, в порядке показа.
+# Изображения симметрии в порядке показа. Ось рисуется поверх текущего
+# вида листа, остальные изображения возвращает поиск оси симметрии.
 SYMMETRY_VIEWS = [
     ("axis", "Ось симметрии"),
     ("straightened", "Распрямлённый лист"),
@@ -79,6 +80,26 @@ def apply_mask_to_color(crop_bgr, mask):
     """
     out = crop_bgr.copy()
     out[mask == 0] = (255, 255, 255)
+    return out
+
+
+def draw_axis(image, axis_points):
+    """
+    Рисует ось симметрии красной линией поверх изображения листа.
+
+    axis_points — точки оси (N, 2) в координатах изображения.
+    Толщина линии зависит от размера изображения, чтобы после вписывания
+    в квадрат LEAF_VIEW_SIZE линия была одинаково видна.
+    """
+    if image.ndim == 2:
+        out = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    else:
+        out = image.copy()
+
+    h, w = out.shape[:2]
+    thickness = max(1, round(1 * max(h, w) / LEAF_VIEW_SIZE))
+    points = np.round(axis_points).astype(np.int32).reshape(-1, 1, 2)
+    cv2.polylines(out, [points], False, (0, 0, 255), thickness, cv2.LINE_AA)
     return out
 
 
@@ -181,7 +202,7 @@ names = list(scans.keys())
 #   sel_leaf — выбранный лист на каждом скане            {имя файла: индекс}
 #   seg      — результаты сегментации сканов             {имя файла: res}
 #   petiole  — результаты отрезания черешка              {(файл, индекс): res}
-#   symmetry — результаты поиска оси симметрии           {(файл, индекс): res}
+#   symmetry — результаты поиска оси симметрии           {(файл, индекс, без черенка): res}
 #   sym_page — номер показанного изображения симметрии   {(файл, индекс): 0..2}
 #   view_bin / view_nopet / view_sym — положение переключателей показа.
 #
@@ -316,7 +337,6 @@ for tab, fname in zip(tabs, names):
 
         leaf = leaves[idx]
         cut_res = st.session_state.petiole.get((fname, idx))
-        sym_res = st.session_state.symmetry.get((fname, idx))
 
         with col_ctl:
             st.markdown(f"**{leaf_name(fname, idx)}**")
@@ -347,6 +367,8 @@ for tab, fname in zip(tabs, names):
                                 leaf["mask"],
                                 svm_model_path=str(MODELS_DIR / "svm_model.xml"),
                                 svm_csv_path=str(MODELS_DIR / "SVM_train_7_1.csv"))
+                    # Ось, найденная по прежней пластине, больше не подходит.
+                    st.session_state.symmetry.pop((fname, idx, True), None)
                     st.rerun()
                 except ImportError:
                     st.error("Модуль leaftools не установлен.")
@@ -372,10 +394,19 @@ for tab, fname in zip(tabs, names):
                 st.caption("⚠ Точки черенка не найдены.")
 
             # Маска, по которой считаются признаки: пластина или весь лист.
-            leaf_mask = leaf["mask"]
-            active_mask = leaf_mask
-            if hide_petiole and petiole_ready:
+            use_blade = hide_petiole and petiole_ready
+            active_mask = leaf["mask"]
+            if use_blade:
                 active_mask = cut_res["blade"]
+
+            # Ось симметрии листа с черенком и без него хранится отдельно.
+            # Показывается та, что соответствует переключателю «Без черенка».
+            sym_id = (fname, idx, use_blade)
+            sym_res = st.session_state.symmetry.get(sym_id)
+            if use_blade:
+                mask_note = "без черенка"
+            else:
+                mask_note = "с черенком"
 
             st.markdown("")
 
@@ -385,11 +416,8 @@ for tab, fname in zip(tabs, names):
                 try:
                     import leaftools
                     with st.spinner("Поиск оси симметрии…"):
-                        sym_res = leaftools.symmetry(active_mask)
-                    # Подпись под изображением показывает, по какой маске
-                    # считалась ось: с черенком или без.
-                    sym_res["without_petiole"] = active_mask is not leaf_mask
-                    st.session_state.symmetry[(fname, idx)] = sym_res
+                        st.session_state.symmetry[sym_id] = \
+                            leaftools.symmetry(active_mask)
                     st.session_state.sym_page[(fname, idx)] = 0
                     st.rerun()
                 except ImportError:
@@ -404,7 +432,8 @@ for tab, fname in zip(tabs, names):
                 value=st.session_state.view_sym.get((fname, idx), False),
                 key=sym_key,
                 disabled=not symmetry_ready,
-                help=None if symmetry_ready else "Сначала найдите ось симметрии",
+                help=None if symmetry_ready else
+                f"Сначала найдите ось симметрии для листа {mask_note}",
                 on_change=remember_toggle,
                 args=("view_sym", (fname, idx), sym_key),
             )
@@ -422,21 +451,35 @@ for tab, fname in zip(tabs, names):
 
         # В центре: выбранный лист в нужном виде. Показ зависит
         # от переключателей:
-        #   симметрия    — изображения оси симметрии со стрелками
-        #                  переключения; важнее остальных переключателей;
         #   бинарный вид — маска вместо цветного изображения;
         #   без черенка  — вместо полной маски берётся пластина, а на
-        #                  цветном изображении черешок стирается по ней.
+        #                  цветном изображении черешок стирается по ней;
+        #   симметрия    — изображения симметрии со стрелками переключения.
+        #                  Ось рисуется поверх текущего вида листа.
         with col_leaf:
+            if show_binary:
+                leaf_view = active_mask
+                # У маски фон чёрный, поэтому и поля чёрные.
+                background = (0, 0, 0)
+                caption = leaf_name(fname, idx) + " · маска"
+            else:
+                leaf_view = leaf["crop"]
+                if use_blade:
+                    leaf_view = apply_mask_to_color(leaf_view, cut_res["blade"])
+                background = (255, 255, 255)
+                caption = leaf_name(fname, idx)
+
             if show_symmetry and symmetry_ready:
                 page = st.session_state.sym_page.get((fname, idx), 0)
                 view_key, view_title = SYMMETRY_VIEWS[page]
-                if sym_res["without_petiole"]:
-                    mask_note = "без черенка"
+                if view_key == "axis":
+                    image = draw_axis(leaf_view, sym_res["axis_points"])
                 else:
-                    mask_note = "с черенком"
+                    image = sym_res[view_key]
+                    background = (255, 255, 255)
                 show_leaf_image(
-                    fit_to_box(sym_res[view_key], LEAF_VIEW_SIZE, LEAF_VIEW_SIZE),
+                    fit_to_box(image, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE,
+                               background=background),
                     caption=f"{view_title} · {page + 1}/{len(SYMMETRY_VIEWS)}"
                             f" · {mask_note}",
                 )
@@ -457,20 +500,11 @@ for tab, fname in zip(tabs, names):
                               width="stretch",
                               on_click=shift_sym_page,
                               args=((fname, idx), 1))
-            elif show_binary:
-                # У маски фон чёрный, поэтому и поля чёрные.
-                show_leaf_image(
-                    fit_to_box(active_mask, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE,
-                               background=(0, 0, 0)),
-                    caption=leaf_name(fname, idx) + " · маска",
-                )
             else:
-                img = leaf["crop"]
-                if hide_petiole and petiole_ready:
-                    img = apply_mask_to_color(img, cut_res["blade"])
                 show_leaf_image(
-                    fit_to_box(img, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE),
-                    caption=leaf_name(fname, idx))
+                    fit_to_box(leaf_view, LEAF_VIEW_SIZE, LEAF_VIEW_SIZE,
+                               background=background),
+                    caption=caption)
 
         # Под колонками: профиль вращения. Результат не кэшируется:
         # дескриптор считается быстро, а маска зависит от переключателей.
