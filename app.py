@@ -30,6 +30,13 @@ SYMMETRY_VIEWS = [
     ("reflected", "Лист и его отражение"),
 ]
 
+# Цвета профилей вращения на цветном графике (схема tableau10).
+# Если листьев больше, цвета повторяются.
+PROFILE_COLORS = [
+    "#4c78a8", "#f58518", "#e45756", "#72b7b2", "#54a24b",
+    "#eeca3b", "#b279a2", "#ff9da6", "#9d755d", "#bab0ac",
+]
+
 
 # Тяжёлые вычисления.
 #   @st.cache_resource — модель, живёт всю сессию;
@@ -246,13 +253,19 @@ names = list(scans.keys())
 #   petiole  — результаты отрезания черешка              {(файл, индекс): res}
 #   symmetry — результаты поиска оси симметрии           {(файл, индекс, без черенка): res}
 #   sym_page — номер показанного изображения симметрии   {(файл, индекс): 0..2}
-#   view_bin / view_nopet / view_sym — положение переключателей показа.
+#   profiles — профили вращения                          {(файл, индекс, без черенка): desc}
+#   show_profile — показан ли профиль вращения скана     {имя файла: bool}
+#   view_bin / view_nopet / view_sym — положение переключателей показа листа;
+#   view_prof_nopet / view_prof_all / view_prof_color — переключатели
+#   профиля вращения, общие для всего скана {имя файла: bool}.
 #
 # Положение переключателей хранится в отдельных словарях: Streamlit стирает
 # состояние виджетов, которых нет в текущей отрисовке, а на странице
 # одновременно показан только один выбранный лист.
 for name in ("sel_leaf", "seg", "petiole", "symmetry", "sym_page",
-             "view_bin", "view_nopet", "view_sym"):
+             "profiles", "show_profile",
+             "view_bin", "view_nopet", "view_sym",
+             "view_prof_nopet", "view_prof_all", "view_prof_color"):
     if not isinstance(st.session_state.get(name), dict):
         st.session_state[name] = {}
 
@@ -268,10 +281,89 @@ def remember_toggle(store_name, store_key, widget_key):
     st.session_state[store_name][store_key] = st.session_state[widget_key]
 
 
+def init_toggle(store_name, store_key, widget_key):
+    """
+    Задаёт начальное положение чекбокса из словаря store_name.
+
+    Streamlit стирает состояние чекбокса, которого не было в прошлой
+    отрисовке (например, при выборе другого листа). Тогда положение
+    берётся из словаря. Вызывается перед отрисовкой чекбокса.
+    """
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = \
+            st.session_state[store_name].get(store_key, False)
+
+
+def show_toggle(store_name, store_key, widget_key):
+    """
+    Включает переключатель программно.
+
+    Положение записывается и в словарь store_name, и в состояние самого
+    чекбокса, иначе в браузере он остался бы выключенным. Вызывается
+    до отрисовки чекбокса.
+    """
+    st.session_state[store_name][store_key] = True
+    st.session_state[widget_key] = True
+
+
 def shift_sym_page(leaf_key, step):
     """Переключает изображение симметрии на соседнее (по кругу)."""
     page = st.session_state.sym_page.get(leaf_key, 0)
     st.session_state.sym_page[leaf_key] = (page + step) % len(SYMMETRY_VIEWS)
+
+
+def cut_leaf_petiole(leaf):
+    """Отрезает черенок листа. Нужен модуль leaftools."""
+    import leaftools
+    return leaftools.cut_petiole(
+        leaf["mask"],
+        svm_model_path=str(MODELS_DIR / "svm_model.xml"),
+        svm_csv_path=str(MODELS_DIR / "SVM_train_7_1.csv"))
+
+
+def leaf_profile(fname, idx, mask, without_petiole):
+    """
+    Профиль вращения листа. Нужен модуль leaftools.
+
+    Результат хранится в session_state.profiles и не пересчитывается
+    при каждой отрисовке.
+    """
+    key = (fname, idx, without_petiole)
+    if key not in st.session_state.profiles:
+        import leaftools
+        st.session_state.profiles[key] = leaftools.describe_mask(mask)
+    return st.session_state.profiles[key]
+
+
+def show_legend(labels, colors, selected_label):
+    """
+    Выводит легенду цветного графика профилей: цветной квадрат и имя
+    листа. Выбранный лист выделен жирным.
+
+    Легенда выводится отдельно от графика, поэтому размер графика
+    не зависит от числа листьев.
+    """
+    items = []
+    for label, color in zip(labels, colors):
+        weight = "bold" if label == selected_label else "normal"
+        items.append(
+            '<span style="display:inline-flex;align-items:center;'
+            f'margin:0 14px 4px 0;font-weight:{weight};">'
+            f'<span style="width:12px;height:12px;background:{color};'
+            'border-radius:2px;margin-right:6px;"></span>'
+            f'{escape(label)}</span>')
+    st.markdown(
+        '<div style="display:flex;flex-wrap:wrap;font-size:.85rem;">'
+        + "".join(items) + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def highlight_row(row, selected):
+    """Подсвечивает в таблице строку выбранного листа."""
+    if row.name == selected:
+        return ["background-color: rgba(255, 75, 75, 0.25)"] * len(row)
+    return [""] * len(row)
 
 
 def segment_scan(fname):
@@ -387,9 +479,9 @@ for tab, fname in zip(tabs, names):
             # переключателя общее для всех его листьев (ключ в словаре —
             # имя файла).
             bin_key = f"bin_{fname}_{idx}"
+            init_toggle("view_bin", fname, bin_key)
             st.checkbox(
                 "Бинарный вид",
-                value=st.session_state.view_bin.get(fname, False),
                 key=bin_key,
                 on_change=remember_toggle,
                 args=("view_bin", fname, bin_key),
@@ -398,32 +490,39 @@ for tab, fname in zip(tabs, names):
 
             st.markdown("")
 
-            # Отрезание черешка разблокирует показ без черешка.
-            if st.button("✂ Удалить черенок", key=f"cutbtn_{fname}_{idx}",
-                         width="stretch"):
-                try:
-                    import leaftools
-                    with st.spinner("Поиск черенка…"):
-                        st.session_state.petiole[(fname, idx)] = \
-                            leaftools.cut_petiole(
-                                leaf["mask"],
-                                svm_model_path=str(MODELS_DIR / "svm_model.xml"),
-                                svm_csv_path=str(MODELS_DIR / "SVM_train_7_1.csv"))
-                    # Ось, найденная по прежней пластине, больше не подходит.
-                    st.session_state.symmetry.pop((fname, idx, True), None)
-                    st.rerun()
-                except ImportError:
-                    st.error("Модуль leaftools не установлен.")
-                except Exception as e:
-                    st.error(f"Не удалось отрезать черенок: {e}")
+            # Отрезание черешка разблокирует показ без черешка. Черешок
+            # отрезается один раз: после этого кнопка неактивна и показывает
+            # результат.
+            if cut_res is None:
+                if st.button("✂ Удалить черенок", key=f"cutbtn_{fname}_{idx}",
+                             width="stretch"):
+                    try:
+                        with st.spinner("Поиск черенка…"):
+                            cut_res = cut_leaf_petiole(leaf)
+                        st.session_state.petiole[(fname, idx)] = cut_res
+                        # Если черенок найден, сразу включаем показ без черенка.
+                        if cut_res.get("found"):
+                            show_toggle("view_nopet", (fname, idx),
+                                        f"nopet_{fname}_{idx}")
+                        st.rerun()
+                    except ImportError:
+                        st.error("Модуль leaftools не установлен.")
+                    except Exception as e:
+                        st.error(f"Не удалось отрезать черенок: {e}")
+            elif cut_res.get("found"):
+                st.button("✔ Черенок удалён", key=f"cutbtn_{fname}_{idx}",
+                          width="stretch", disabled=True)
+            else:
+                st.button("⚠ Черенок не найден", key=f"cutbtn_{fname}_{idx}",
+                          width="stretch", disabled=True)
 
             petiole_ready = cut_res is not None and cut_res.get("found")
             # Черешок отрезается для каждого листа отдельно, поэтому
             # и положение переключателя хранится для каждого листа.
             nopet_key = f"nopet_{fname}_{idx}"
+            init_toggle("view_nopet", (fname, idx), nopet_key)
             st.checkbox(
                 "Без черенка",
-                value=st.session_state.view_nopet.get((fname, idx), False),
                 key=nopet_key,
                 disabled=not petiole_ready,
                 help=None if petiole_ready else "Сначала удалите черенок",
@@ -431,9 +530,6 @@ for tab, fname in zip(tabs, names):
                 args=("view_nopet", (fname, idx), nopet_key),
             )
             hide_petiole = st.session_state.view_nopet.get((fname, idx), False)
-
-            if cut_res is not None and not cut_res.get("found"):
-                st.caption("⚠ Точки черенка не найдены.")
 
             # Маска, по которой считаются признаки: пластина или весь лист.
             use_blade = hide_petiole and petiole_ready
@@ -452,26 +548,42 @@ for tab, fname in zip(tabs, names):
 
             st.markdown("")
 
-            # Ось симметрии считается по той маске, что показана.
-            if st.button("⟷ Ось симметрии", key=f"symbtn_{fname}_{idx}",
-                         width="stretch"):
-                try:
-                    import leaftools
-                    with st.spinner("Поиск оси симметрии…"):
-                        st.session_state.symmetry[sym_id] = \
-                            leaftools.symmetry(active_mask)
-                    st.session_state.sym_page[(fname, idx)] = 0
-                    st.rerun()
-                except ImportError:
-                    st.error("Модуль leaftools не установлен.")
-                except Exception as e:
-                    st.error(f"Не удалось найти ось симметрии: {e}")
+            # Ось симметрии считается по той маске, что показана. Кнопка
+            # становится неактивной, когда ось для этой маски уже найдена;
+            # при переключении «Без черенка» она снова активна, если ось
+            # для другой маски ещё не искали.
+            if sym_res is None:
+                if st.button("⟷ Ось симметрии", key=f"symbtn_{fname}_{idx}",
+                             width="stretch"):
+                    try:
+                        import leaftools
+                        with st.spinner("Поиск оси симметрии…"):
+                            sym_res = leaftools.symmetry(active_mask)
+                        st.session_state.symmetry[sym_id] = sym_res
+                        st.session_state.sym_page[(fname, idx)] = 0
+                        # Если ось найдена, сразу включаем показ симметрии.
+                        if sym_res.get("found"):
+                            show_toggle("view_sym", (fname, idx),
+                                        f"sym_{fname}_{idx}")
+                        st.rerun()
+                    except ImportError:
+                        st.error("Модуль leaftools не установлен.")
+                    except Exception as e:
+                        st.error(f"Не удалось найти ось симметрии: {e}")
+            elif sym_res.get("found"):
+                st.button(f"✔ Ось найдена, {mask_note}",
+                          key=f"symbtn_{fname}_{idx}",
+                          width="stretch", disabled=True)
+            else:
+                st.button(f"⚠ Ось не найдена, {mask_note}",
+                          key=f"symbtn_{fname}_{idx}",
+                          width="stretch", disabled=True)
 
             symmetry_ready = sym_res is not None and sym_res.get("found")
             sym_key = f"sym_{fname}_{idx}"
+            init_toggle("view_sym", (fname, idx), sym_key)
             st.checkbox(
                 "Симметрия",
-                value=st.session_state.view_sym.get((fname, idx), False),
                 key=sym_key,
                 disabled=not symmetry_ready,
                 help=None if symmetry_ready else
@@ -481,15 +593,19 @@ for tab, fname in zip(tabs, names):
             )
             show_symmetry = st.session_state.view_sym.get((fname, idx), False)
 
-            if sym_res is not None and not sym_res.get("found"):
-                st.caption("⚠ Ось симметрии не найдена.")
-
             st.markdown("")
 
-            # Профиль вращения считается по той маске, что показана.
-            want_profile = st.button(
-                "📈 Профиль вращения", key=f"prof_{fname}_{idx}",
-                width="stretch")
+            # Кнопка включает показ профиля вращения под колонками.
+            # Показ общий для всего скана, поэтому после нажатия кнопка
+            # неактивна у всех его листьев.
+            if not st.session_state.show_profile.get(fname, False):
+                if st.button("📈 Профиль вращения", key=f"prof_{fname}_{idx}",
+                             width="stretch"):
+                    st.session_state.show_profile[fname] = True
+                    st.rerun()
+            else:
+                st.button("✔ Профиль вращения", key=f"prof_{fname}_{idx}",
+                          width="stretch", disabled=True)
 
         # В центре: выбранный лист в нужном виде. Показ зависит
         # от переключателей:
@@ -549,38 +665,221 @@ for tab, fname in zip(tabs, names):
                                background=background),
                     caption=caption)
 
-        # Под колонками: профиль вращения. Результат не кэшируется:
-        # дескриптор считается быстро, а маска зависит от переключателей.
-        if want_profile:
-            try:
-                import leaftools
-                desc = leaftools.describe_mask(active_mask)
+        # Под колонками: слева таблица листьев скана, справа профиль
+        # вращения.
+        st.markdown("---")
+        col_table, col_profile = st.columns([1, 1.5])
 
-                chart_df = pd.DataFrame({
-                    "angle": desc["angles"],
-                    "jaccard": desc["jaccard_values"],
-                })
-                chart = (
-                    alt.Chart(chart_df)
-                    .mark_line()
-                    .encode(
-                        x=alt.X("angle:Q", scale=alt.Scale(domain=[0, 180]),
-                                title="Угол"),
-                        y=alt.Y("jaccard:Q", scale=alt.Scale(domain=[0, 1]),
-                                title="Жаккар"),
+        # Таблица листьев. Значения посчитаны при сегментации, для листа
+        # с черенком. Выбранный лист подсвечен.
+        with col_table:
+            st.markdown("**Листья скана**")
+            table = pd.DataFrame({
+                "Лист": [leaf_name(fname, i) for i in range(k)],
+                "Площадь, пикс²": [lf["area"] for lf in leaves],
+                "Периметр, пикс": [lf["perimeter"] for lf in leaves],
+                "Фактор формы": [lf["form_factor"] for lf in leaves],
+            })
+            styled = (
+                table.style
+                .format({"Площадь, пикс²": "{:.0f}",
+                         "Периметр, пикс": "{:.1f}",
+                         "Фактор формы": "{:.3f}"})
+                .apply(highlight_row, selected=idx, axis=1)
+            )
+            st.dataframe(styled, hide_index=True, width="stretch")
+
+        # Профиль вращения. Переключатели общие для всего скана:
+        #   без черенка — профиль пластины; если черенок у листа ещё
+        #                 не удалён, он удаляется автоматически;
+        #   все листья  — профили всех листьев скана на одном графике.
+        with col_profile:
+            st.markdown("**Профиль вращения**")
+            if not st.session_state.show_profile.get(fname, False):
+                st.caption("Нажмите «📈 Профиль вращения», чтобы построить "
+                           "график.")
+                continue
+
+            chart_col, options_col = st.columns([4, 1])
+            with options_col:
+                prof_nopet_key = f"profnopet_{fname}"
+                init_toggle("view_prof_nopet", fname, prof_nopet_key)
+                st.checkbox(
+                    "Без черенка",
+                    key=prof_nopet_key,
+                    on_change=remember_toggle,
+                    args=("view_prof_nopet", fname, prof_nopet_key),
+                )
+                prof_all_key = f"profall_{fname}"
+                init_toggle("view_prof_all", fname, prof_all_key)
+                st.checkbox(
+                    "Все листья",
+                    key=prof_all_key,
+                    on_change=remember_toggle,
+                    args=("view_prof_all", fname, prof_all_key),
+                )
+                prof_color_key = f"profcolor_{fname}"
+                init_toggle("view_prof_color", fname, prof_color_key)
+                st.checkbox(
+                    "Цветные профили",
+                    key=prof_color_key,
+                    on_change=remember_toggle,
+                    args=("view_prof_color", fname, prof_color_key),
+                )
+            prof_nopet = st.session_state.view_prof_nopet.get(fname, False)
+            prof_all = st.session_state.view_prof_all.get(fname, False)
+            prof_color = st.session_state.view_prof_color.get(fname, False)
+
+            with chart_col:
+                if prof_all:
+                    leaf_ids = list(range(k))
+                else:
+                    leaf_ids = [idx]
+
+                try:
+                    # Удаляем черенок у листьев, где его ещё не удаляли.
+                    # Результат сохраняется, и у этих листьев справа кнопка
+                    # тоже показывает, что черенок удалён.
+                    if prof_nopet:
+                        missing = [i for i in leaf_ids
+                                   if (fname, i) not in st.session_state.petiole]
+                        if missing:
+                            with st.spinner(f"Удаление черенка, листьев: "
+                                            f"{len(missing)}…"):
+                                for i in missing:
+                                    st.session_state.petiole[(fname, i)] = \
+                                        cut_leaf_petiole(leaves[i])
+                            st.rerun()
+
+                    # Профили выбранных листьев. Подпись в легенде — имя
+                    # листа без расширения файла. Если черенок не найден,
+                    # берётся весь лист, а к подписи добавляется звёздочка.
+                    profiles = {}
+                    names = []
+                    selected_label = None
+                    petiole_missing = False
+                    for i in leaf_ids:
+                        mask = leaves[i]["mask"]
+                        name = Path(leaf_name(fname, i)).stem
+                        label = name
+                        use_blade = False
+                        if prof_nopet:
+                            cut = st.session_state.petiole[(fname, i)]
+                            if cut.get("found"):
+                                mask = cut["blade"]
+                                use_blade = True
+                            else:
+                                label += " *"
+                                petiole_missing = True
+                        profiles[label] = leaf_profile(fname, i, mask, use_blade)
+                        names.append(name)
+                        if i == idx:
+                            selected_label = label
+                except ImportError:
+                    st.error("Модуль leaftools не установлен.")
+                    continue
+                except Exception as e:
+                    st.error(f"Не удалось посчитать профиль вращения: {e}")
+                    continue
+
+                # Данные для графика: одна строка на угол каждого листа.
+                rows = []
+                for label, desc in profiles.items():
+                    for angle, value in zip(desc["angles"], desc["jaccard_values"]):
+                        rows.append({"leaf": label, "angle": angle,
+                                     "jaccard": value})
+                chart_df = pd.DataFrame(rows)
+
+                # Ось Y начинается с наименьшего значения среди всех
+                # показанных профилей, чтобы различия были заметнее.
+                y_min = float(chart_df["jaccard"].min())
+                if y_min >= 1:
+                    y_min = 0.0
+
+                # Оси и подсказка общие для обоих видов графика. Поле leaf
+                # в detail разделяет точки на отдельные линии по листьям.
+                base = alt.Chart(chart_df).encode(
+                    x=alt.X("angle:Q", scale=alt.Scale(domain=[0, 180]),
+                            title="Угол"),
+                    y=alt.Y("jaccard:Q",
+                            scale=alt.Scale(domain=[y_min, 1], nice=False),
+                            title="Жаккар"),
+                    detail="leaf:N",
+                    tooltip=[alt.Tooltip("leaf:N", title="Лист"),
+                             alt.Tooltip("angle:Q", title="Угол"),
+                             alt.Tooltip("jaccard:Q", title="Жаккар",
+                                         format=".3f")],
+                )
+
+                # Цвет каждого листа на цветном графике. Тот же список
+                # цветов используется в легенде под графиком.
+                labels = list(profiles.keys())
+                colors = []
+                for i in range(len(labels)):
+                    colors.append(PROFILE_COLORS[i % len(PROFILE_COLORS)])
+
+                if prof_color:
+                    # У каждого листа свой цвет, выбранный лист нарисован
+                    # толще. Легенда выводится отдельно, под графиком.
+                    lines = base.mark_line(clip=True).encode(
+                        color=alt.Color(
+                            "leaf:N",
+                            scale=alt.Scale(domain=labels, range=colors),
+                            legend=None),
+                        strokeWidth=alt.condition(
+                            alt.datum.leaf == selected_label,
+                            alt.value(3), alt.value(1.5)),
                     )
-                    .properties(height=220)
+                else:
+                    # Остальные листья серые, выбранный — красный. Он
+                    # рисуется вторым слоем, чтобы быть поверх серых линий.
+                    others = base.transform_filter(
+                        alt.datum.leaf != selected_label
+                    ).mark_line(clip=True, color="#a0a0a0", strokeWidth=1.5)
+                    selected = base.transform_filter(
+                        alt.datum.leaf == selected_label
+                    ).mark_line(clip=True, color="#e45756", strokeWidth=3)
+                    lines = alt.layer(others, selected)
+
+                chart = (
+                    lines
+                    .properties(height=320)
+                    # Колёсико мыши — масштаб, перетаскивание — сдвиг,
+                    # двойной клик — исходный вид.
+                    .interactive()
                 )
                 st.altair_chart(chart, width="stretch")
 
-                csv = "angle;jaccard\n" + "\n".join(
-                    f"{int(a)};{v:.6f}"
-                    for a, v in zip(desc["angles"], desc["jaccard_values"]))
-                st.download_button(
-                    "Скачать дескриптор (CSV)", data=csv,
-                    file_name=f"{leaf_name(fname, idx)}_descriptor.csv",
-                    mime="text/csv", key=f"csv_{fname}_{idx}")
-            except ImportError:
-                st.error("Модуль leaftools не установлен.")
-            except Exception as e:
-                st.error(f"Не удалось посчитать дескриптор: {e}")
+                # CSV: строки — углы, столбцы — листья.
+                angles = profiles[labels[0]]["angles"]
+                csv_lines = ["angle;" + ";".join(names)]
+                for a_idx, angle in enumerate(angles):
+                    values = [f"{profiles[label]['jaccard_values'][a_idx]:.6f}"
+                              for label in labels]
+                    csv_lines.append(f"{int(angle)};" + ";".join(values))
+                csv = "\n".join(csv_lines)
+
+                if prof_all:
+                    csv_name = f"{Path(fname).stem}_descriptors"
+                else:
+                    csv_name = f"{Path(leaf_name(fname, idx)).stem}_descriptor"
+                if prof_nopet:
+                    csv_name += "_no_petiole"
+
+                # Под графиком: слева пояснения и кнопка скачивания,
+                # справа легенда цветного графика.
+                info_col, legend_col = st.columns(2)
+                with info_col:
+                    if not prof_color:
+                        st.caption(f"Красным — выбранный лист "
+                                   f"{selected_label}.")
+                    if petiole_missing:
+                        st.caption("\\* черенок не найден, профиль "
+                                   "построен по всему листу.")
+                    st.download_button(
+                        "Скачать профиль вращения (CSV)", data=csv,
+                        file_name=csv_name + ".csv",
+                        mime="text/csv", key=f"csv_{fname}")
+                with legend_col:
+                    if prof_color:
+                        show_legend(labels, colors, selected_label)
