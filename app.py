@@ -83,13 +83,50 @@ def apply_mask_to_color(crop_bgr, mask):
     return out
 
 
-def draw_axis(image, axis_points):
+def extend_to_edge(axis_points, mask):
+    """
+    Продлевает ось от последней точки до края листа по направлению
+    последнего отрезка.
+
+    Поиск оси идёт шагами и останавливается перед шагом, который вышел бы
+    за лист, поэтому последняя точка лежит немного внутри листа.
+    """
+    if len(axis_points) < 2:
+        return axis_points
+
+    last = axis_points[-1]
+    direction = last - axis_points[-2]
+    length = np.hypot(direction[0], direction[1])
+    if length == 0:
+        return axis_points
+    direction = direction / length
+
+    h, w = mask.shape
+    end = last
+    while True:
+        next_point = end + direction
+        x = int(round(next_point[0]))
+        y = int(round(next_point[1]))
+        if x < 0 or y < 0 or x >= w or y >= h:
+            break
+        if mask[y, x] == 0:
+            break
+        end = next_point
+
+    return np.vstack([axis_points, end])
+
+
+def draw_axis(image, axis_points, mask):
     """
     Рисует ось симметрии красной линией поверх изображения листа.
 
-    axis_points — точки оси (N, 2) в координатах изображения.
+    axis_points — точки оси (N, 2) в координатах изображения;
+    mask        — маска, по которой искалась ось.
+
     Толщина линии зависит от размера изображения, чтобы после вписывания
-    в квадрат LEAF_VIEW_SIZE линия была одинаково видна.
+    в квадрат LEAF_VIEW_SIZE линия была одинаково видна. Линия остаётся
+    только внутри маски: у узкого кончика листа толстая линия не выходит
+    за край.
     """
     if image.ndim == 2:
         out = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -98,8 +135,13 @@ def draw_axis(image, axis_points):
 
     h, w = out.shape[:2]
     thickness = max(1, round(1 * max(h, w) / LEAF_VIEW_SIZE))
-    points = np.round(axis_points).astype(np.int32).reshape(-1, 1, 2)
-    cv2.polylines(out, [points], False, (0, 0, 255), thickness, cv2.LINE_AA)
+    points = extend_to_edge(axis_points, mask)
+    points = np.round(points).astype(np.int32).reshape(-1, 1, 2)
+
+    with_line = out.copy()
+    cv2.polylines(with_line, [points], False, (0, 0, 255), thickness, cv2.LINE_AA)
+    inside = mask > 0
+    out[inside] = with_line[inside]
     return out
 
 
@@ -473,7 +515,8 @@ for tab, fname in zip(tabs, names):
                 page = st.session_state.sym_page.get((fname, idx), 0)
                 view_key, view_title = SYMMETRY_VIEWS[page]
                 if view_key == "axis":
-                    image = draw_axis(leaf_view, sym_res["axis_points"])
+                    image = draw_axis(leaf_view, sym_res["axis_points"],
+                                      active_mask)
                 else:
                     image = sym_res[view_key]
                     background = (255, 255, 255)
